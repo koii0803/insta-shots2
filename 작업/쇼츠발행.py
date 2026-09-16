@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
-"""깃허브 액션이 매시간 실행하는 인스타 릴스 발행·정리 스크립트. 사용자가 직접 만질 일 없음.
+"""깃허브 액션이 매시간 실행하는 인스타 릴스 발행 스크립트. 사용자가 직접 만질 일 없음.
+이 저장소에는 영상이 없다(영상은 Cloudflare R2). 여기서는 예약표(쇼츠예약.json)만 본다.
 
 하는 일:
-  1. 쇼츠예약.json 에서 publish_at 이 지난 "대기" 건 → Make 웹훅(MAKE_WEBHOOK_REELS)으로
-     {"type":"reel","id","video_url","caption","share_to_feed":true} 전송 → 성공이면 status "게시", posted_at 기록
-     실패면 status "실패" + 오류기록.txt 한 줄 (다음 시간에 다시 시도하지 않는다. 사람이 보고 판단)
-  2. "게시" 건 중 posted_at + delete_after_hours 가 지난 것 → videos/<id>.mp4 삭제, 예약표에서 제거, 발행기록.txt 한 줄
+  쇼츠예약.json 에서 publish_at 이 지난 "대기" 건 → Make 웹훅(MAKE_WEBHOOK_REELS)으로
+  {"type":"reel","id","video_url","caption","share_to_feed":true} 전송
+  → 성공이면 status "게시", posted_at 기록 / 실패면 status "실패" + 오류기록.txt 한 줄 (다시 시도하지 않는다. 사람이 본다)
+영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(게시 20시간 뒤).
 웹훅 주소는 저장소에 없고 깃허브 Secrets(MAKE_WEBHOOK_REELS)로만 들어온다.
-로컬 시험: python 작업/쇼츠발행.py --dry-run  (전송·삭제 없이 무엇을 할지만 찍는다)
+로컬 시험: python 작업/쇼츠발행.py --dry-run
 """
 import os
 import sys
 import json
 import urllib.request
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -71,10 +72,8 @@ def main():
     q = json.loads(QUEUE.read_text(encoding="utf-8"))
     t = now()
     changed = False
-    keep = []
     for it in q:
-        st = it.get("status", "대기")
-        if st == "대기" and parse(it["publish_at"]) <= t:
+        if it.get("status", "대기") == "대기" and parse(it["publish_at"]) <= t:
             err = send(it)
             if err:
                 it["status"] = "실패"
@@ -84,20 +83,8 @@ def main():
                 it["posted_at"] = t.strftime("%Y-%m-%d %H:%M")
                 log(LOG_OK, "%s %s 게시 전송 (예약 %s) %s" % (it["posted_at"], it["id"], it["publish_at"], it["video_url"]))
             changed = True
-            keep.append(it)
-            continue
-        if st == "게시" and it.get("posted_at"):
-            due = parse(it["posted_at"]) + timedelta(hours=int(it.get("delete_after_hours", 24)))
-            if due <= t:
-                f = ROOT / it["file"]
-                if not DRY and f.exists():
-                    f.unlink()
-                log(LOG_OK, "%s %s 영상 삭제 (게시 %s 뒤 %s시간)" % (t.strftime("%Y-%m-%d %H:%M"), it["id"], it["posted_at"], it.get("delete_after_hours", 24)))
-                changed = True
-                continue
-        keep.append(it)
     if changed and not DRY:
-        QUEUE.write_text(json.dumps(keep, ensure_ascii=False, indent=1), encoding="utf-8")
+        QUEUE.write_text(json.dumps(q, ensure_ascii=False, indent=1), encoding="utf-8")
     if not changed:
         print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
 
