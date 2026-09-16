@@ -1,0 +1,25 @@
+# 인스타 릴스 예약발행 — 매시간 깨어나 쇼츠예약.json 의 시간 지난 건을 Make 웹훅으로 보내고, 게시 뒤 24시간 지난 mp4 를 지운다.
+# PC 가 꺼져 있어도 돈다. 웹훅 주소는 저장소 Settings → Secrets and variables → Actions → MAKE_WEBHOOK_REELS 에 등록.
+name: shorts-publish
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: 예약 확인·발행·정리
+        env:
+          MAKE_WEBHOOK_REELS: ${{ secrets.MAKE_WEBHOOK_REELS }}
+        run: python 작업/쇼츠발행.py
+      - name: 결과 커밋
+        run: |
+          git config user.name "shorts-publish"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || (git commit -m "인스타 예약발행 실행" && git push)
