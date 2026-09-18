@@ -1,2 +1,3 @@
 2026-09-18 19:33 threads-고정글 스레드 답글(링크) 실패 (본문은 게시됨): [code 1 HTTP 500] An unknown error occurred
 2026-09-18 19:36 threads-고정글 스레드 답글(링크) 실패 (본문은 게시됨): [code 1 HTTP 500] An unknown error occurred
+2026-09-19 01:30 스레드 하루치: 일상 글 못 만듦(2026-09-20 21:59)
