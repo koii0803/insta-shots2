@@ -1,0 +1,40 @@
+# 인스타 토큰 자동 갱신 — 매주 월요일 03:00 KST(일요일 18:00 UTC). 사용자가 손댈 일 없음.
+# 60일 사용자 토큰(FB_USER_TOKEN)을 연장하고 페이지 토큰(IG_ACCESS_TOKEN)을 다시 뽑아 Secrets 에 스스로 써 넣는다(GH_PAT 필요).
+# 실패하면 Secrets 는 그대로 두고 이 워크플로가 빨강 → 깃허브가 이메일로 알린다. 그때 PC 에서 python ig_token.py --auto 로 다시 넣는다.
+name: token-refresh
+on:
+  schedule:
+    - cron: "0 18 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: token-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q pynacl
+      - name: 토큰 연장·페이지 토큰 재발급·Secrets 갱신
+        env:
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          FB_USER_TOKEN: ${{ secrets.FB_USER_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: python 작업/토큰갱신.py
+      - name: 상태 커밋
+        if: always()
+        run: |
+          git config user.name "token-refresh"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "토큰 갱신 기록"
+          for i in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            echo "푸시 실패, 다시 ($i/3)"; sleep 5
+          done
+          exit 1
