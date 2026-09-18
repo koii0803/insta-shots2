@@ -151,6 +151,7 @@ def main():
     # 4-c) 유튜브 refresh_token 살아 있는지 (금고에 있을 때만). 구글 refresh_token 은 만료가 없어 갱신은 없고, 액세스 토큰만 받아 본다
     yt_state = "없음"
     if v.get("youtube_refresh_token"):
+        at = ""
         try:
             data = urllib.parse.urlencode({"grant_type": "refresh_token", "client_id": v["youtube_client_id"],
                                            "client_secret": v["youtube_client_secret"], "refresh_token": v["youtube_refresh_token"]}).encode()

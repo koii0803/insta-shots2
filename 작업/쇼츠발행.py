@@ -371,7 +371,7 @@ def yt_download(url, path):
     return size
 
 
-def publish_yt(item, save):
+def publish_yt(item):
     """R2 → 유튜브 재개 업로드. publish_at 이 15분 이상 앞이면 예약 공개, 아니면 바로 공개. (video_id, 상태) 를 돌려준다"""
     from datetime import timedelta
     when = parse(item["publish_at"])
@@ -673,7 +673,7 @@ def main():
     for it in due_yt:
         print("유튜브 업로드: %s (예약 %s)" % (it["id"], it["publish_at"]))
         try:
-            vid, st = publish_yt(it, save)
+            vid, st = publish_yt(it)
         except GraphError as e:
             if handle_error(it, e, "yt", save):
                 break
