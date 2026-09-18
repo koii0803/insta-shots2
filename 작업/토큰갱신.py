@@ -148,12 +148,33 @@ def main():
             kk_state = "연장 실패: %s" % e
             print("카카오 연장 실패(다른 건 계속): %s" % e)
 
+    # 4-c) 유튜브 refresh_token 살아 있는지 (금고에 있을 때만). 구글 refresh_token 은 만료가 없어 갱신은 없고, 액세스 토큰만 받아 본다
+    yt_state = "없음"
+    if v.get("youtube_refresh_token"):
+        try:
+            data = urllib.parse.urlencode({"grant_type": "refresh_token", "client_id": v["youtube_client_id"],
+                                           "client_secret": v["youtube_client_secret"], "refresh_token": v["youtube_refresh_token"]}).encode()
+            with urllib.request.urlopen(urllib.request.Request("https://oauth2.googleapis.com/token", data), timeout=30) as r:
+                at = json.load(r).get("access_token", "")
+            req = urllib.request.Request("https://www.googleapis.com/youtube/v3/channels?part=id,snippet&mine=true",
+                                         headers={"Authorization": "Bearer " + at})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                items = json.load(r).get("items") or []
+            if items and items[0].get("id") == v.get("youtube_channel_id"):
+                yt_state = "%s 정상" % items[0]["snippet"].get("title", "")
+            else:
+                yt_state = "채널 불일치: %s" % [(i.get("id"), i.get("snippet", {}).get("title")) for i in items]
+            print("유튜브: %s" % yt_state)
+        except Exception as e:
+            yt_state = "확인 실패(PC 에서 python youtube_token.py): %s" % str(e)[:120]
+            print("유튜브 토큰 확인 실패(다른 건 계속): %s" % e)
+
     # 5) 금고 갱신 + 상태
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
     v.update({"user_token": new, "expires_at": exp, "updated": now})
     금고.save(KEY, v)
     STATE.write_text(json.dumps({"갱신": now, "만료": kst(exp), "data_access": kst(d.get("data_access_expires_at")),
-                                 "인스타": "@" + IG_USERNAME, "스레드": th_state, "카카오": kk_state}, ensure_ascii=False, indent=1), encoding="utf-8")
+                                 "인스타": "@" + IG_USERNAME, "스레드": th_state, "카카오": kk_state, "유튜브": yt_state}, ensure_ascii=False, indent=1), encoding="utf-8")
     print("금고·토큰상태.json 갱신. 끝.")
 
 

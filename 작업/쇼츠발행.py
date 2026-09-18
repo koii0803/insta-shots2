@@ -7,6 +7,11 @@
      인스타 토큰이 죽었으면 아무것도 건드리지 않고 오류기록.txt 한 줄 + 종료코드 1 (액션 실패 → 이메일).
      스레드 토큰이 없거나 죽었으면 인스타만 하고 스레드는 건너뛴다(기록 남김).
      페북은 같은 60일 사용자 토큰에 pages_manage_posts·publish_video 권한이 있을 때만(없으면 건너뜀, 기록 남김). 페이지 토큰은 매번 GET /{PAGE_ID}?fields=access_token 으로 뽑는다.
+  0-b) 유튜브(2026-09-19): 금고에 youtube_refresh_token 이 있으면 refresh → 액세스 토큰 → channels.list(mine) 로 명운보감인지 확인.
+     없거나 죽었으면 유튜브만 건너뛴다(기록 남김).
+  1-a) 유튜브: youtube_status 가 "대기"인 건은 publish_at 을 기다리지 않고 바로(다음 회차) R2 에서 mp4 를 받아 유튜브에 올린다.
+     publish_at 이 아직 앞이면 비공개 + publishAt(예약 공개), 이미 지났으면 바로 공개. → youtube_status "예약"/"공개", youtube_url.
+     하루 한도(API 10,000 = 업로드 6편)·인증 오류면 대기 유지, 영상 규격 오류면 "실패", 그 외 3회.
   1) 쇼츠예약.json 에서 publish_at 이 지난 건마다
      - 인스타: status 가 "대기"면 POST /{IG_USER_ID}/media (REELS) → 컨테이너 FINISHED 까지 → media_publish → status "게시"
      - 스레드: threads_status 가 "대기"면 POST /{THREADS_USER_ID}/threads (TEXT, 글만) → FINISHED → threads_publish → threads_status "게시"
@@ -19,7 +24,8 @@
      - 속도 제한(4, 17, 32, 613, 하루 한도 소진): 대기 유지, 다음 회차
      - 영상 규격(2207xxx, unsupported/aspect ratio/too short/too long, 컨테이너 ERROR): 즉시 "실패" (다시 해도 안 됨)
      - 그 외(전송 실패, 시간 초과 등): attempts +1, 3회까지 대기 유지, 넘으면 "실패". last_error 에 마지막 이유.
-예약표 한 건: id, video_url, caption, publish_at, status(인스타), youtube_url + 액션이 쓰는 ig_container_id, ig_media_id, posted_at, attempts, last_error,
+예약표 한 건: id, video_url, caption, publish_at, status(인스타), youtube_url + 액션이 쓰는 ig_container_id,
+             youtube_status, yt_title, yt_description, yt_tags(PC 가 실음), youtube_video_id, youtube_uploaded_at, youtube_attempts, youtube_error(액션이 씀), ig_media_id, posted_at, attempts, last_error,
              threads_text(스레드글.py 가 만든 글), threads_status, threads_container_id, threads_media_id, threads_posted_at, threads_attempts, threads_entities(가림 위치), threads_error, threads_reply_id,
              fb_caption, fb_status, fb_video_id, fb_post_id, fb_posted_at, fb_attempts, fb_error
 영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(인스타 게시 20시간 뒤. 스레드·페북이 아직 대기면 48시간까지).
@@ -45,6 +51,11 @@ VAULT_KEY = os.environ.get("IG_ACCESS_TOKEN", "").strip()   # 금고 열쇠(만�
 IG_TOKEN = ""                                                 # 게시용 60일 인스타 토큰. 금고에서 꺼낸다
 TH_TOKEN, TH_USER_ID, TH_USERNAME = "", "", ""                # 스레드. 금고에 있으면 쓴다
 FB_TOKEN, FB_PAGE_NAME = "", ""                               # 페북 페이지 토큰(사용자 토큰으로 매번 뽑음). 권한 있을 때만
+YT_TOKEN, YT_CHANNEL_TITLE = "", ""                           # 유튜브 액세스 토큰(금고의 refresh_token 으로 매번 뽑음). 금고에 있을 때만
+YT_CREDS = {}                                                 # 금고의 youtube_client_id·client_secret·refresh_token. 값은 안 찍는다
+YT_CHANNEL_ID = "UCSs1eCimg-mvZPVIZtzNAKA"                   # 명운보감. 다른 채널이면 게시 전에 멈춘다. = PC youtube_token.py
+YT_API = "https://www.googleapis.com/youtube/v3/"
+YT_UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status"
 IG_SCOPES = set()                                             # 사용자 토큰 권한(debug_token). 페북 권한 확인용
 IG_USERNAME = "luck.arcade"           # 운빨연구소. 다른 계정이면 게시 전에 멈춘다
 PAGE_ID = "1339892089198082"          # 페이스북 페이지 hulit (릴스 올리는 곳). = 토큰갱신.py PAGE_ID
@@ -168,6 +179,7 @@ def open_vault():
     except Exception as e:
         return "금고를 못 열음(열쇠 태그 %s): %s" % (금고.key_tag(VAULT_KEY), type(e).__name__)
     IG_TOKEN = v.get("user_token", "")
+    YT_CREDS.update({k: v.get("youtube_" + k, "") for k in ("client_id", "client_secret", "refresh_token")})
     TH_TOKEN = v.get("threads_token", "")
     TH_USER_ID = str(v.get("threads_user_id", "") or "")
     TH_USERNAME = v.get("threads_username", "")
@@ -254,6 +266,137 @@ def check_fb():
         return False
     print("페북 페이지: %s (%s)" % (FB_PAGE_NAME, PAGE_ID))
     return True
+
+
+# ── 유튜브 ──────────────────────────────────────────────────────────
+def yt_call(method, url, body=None, headers=None, raw=None, timeout=300):
+    """유튜브 API. (JSON 응답, 응답 헤더). 실패면 GraphError(kind 는 유튜브 기준으로 접음)"""
+    h = {"Authorization": "Bearer " + YT_TOKEN}
+    h.update(headers or {})
+    data = raw if raw is not None else (json.dumps(body).encode("utf-8") if body is not None else None)
+    if body is not None:
+        h["Content-Type"] = "application/json; charset=UTF-8"
+    req = urllib.request.Request(url, data, method=method, headers=h)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            txt = r.read().decode("utf-8", "replace")
+            return (json.loads(txt) if txt.strip() else {}), r.headers
+    except urllib.error.HTTPError as e:
+        txt = e.read().decode("utf-8", "replace")
+        try:
+            err = json.loads(txt).get("error", {})
+            reason = ((err.get("errors") or [{}])[0].get("reason") or "")
+            msg = "%s %s" % (reason, err.get("message") or "")
+        except Exception:
+            reason, msg = "", txt[:300]
+        raise GraphError(msg.strip(), code=_yt_code(e.code, reason), http=e.code)
+    except Exception as e:
+        raise GraphError("전송 실패: %s" % e)
+
+
+def _yt_code(http, reason):
+    """유튜브 오류를 GraphError.kind 로 접기: 401/권한 → 190(auth), 한도 → 4(rate), 그 외 None(other)"""
+    r = (reason or "")
+    if http == 401 or r in ("authError", "forbidden", "insufficientPermissions", "youtubeSignupRequired"):
+        return 190
+    if "quota" in r.lower() or "rateLimit" in r or http == 429:
+        return 4
+    return None
+
+
+def check_youtube():
+    """금고의 refresh_token 으로 액세스 토큰을 받고 채널이 명운보감인지 본다. 되면 True, 아니면 False(유튜브만 건너뜀)"""
+    global YT_TOKEN, YT_CHANNEL_TITLE
+    if not YT_CREDS.get("refresh_token"):
+        print("유튜브: 금고에 토큰 없음 → 건너뜀 (PC 에서 python youtube_token.py)")
+        return False
+    data = urllib.parse.urlencode({"grant_type": "refresh_token", "client_id": YT_CREDS["client_id"],
+                                   "client_secret": YT_CREDS["client_secret"], "refresh_token": YT_CREDS["refresh_token"]}).encode()
+    try:
+        with urllib.request.urlopen(urllib.request.Request("https://oauth2.googleapis.com/token", data), timeout=60) as r:
+            YT_TOKEN = json.load(r).get("access_token", "")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        try:
+            j = json.loads(body); why = "%s %s" % (j.get("error"), j.get("error_description"))
+        except Exception:
+            why = body[:200]
+        log(LOG_ERR, "%s 유튜브 토큰 실패 (유튜브만 건너뜀. PC 에서 python youtube_token.py): %s" % (stamp(), why))
+        return False
+    except Exception as e:
+        log(LOG_ERR, "%s 유튜브 토큰 전송 실패 (유튜브만 건너뜀): %s" % (stamp(), e))
+        return False
+    if not YT_TOKEN:
+        log(LOG_ERR, "%s 유튜브 액세스 토큰 없음 (유튜브만 건너뜀)" % stamp())
+        return False
+    try:
+        j, _ = yt_call("GET", YT_API + "channels?part=id,snippet&mine=true")
+    except GraphError as e:
+        log(LOG_ERR, "%s 유튜브 채널 조회 실패 (유튜브만 건너뜀): %s" % (stamp(), e))
+        return False
+    items = j.get("items") or []
+    if not items or items[0].get("id") != YT_CHANNEL_ID:
+        log(LOG_ERR, "%s 유튜브 채널 불일치 (유튜브만 건너뜀): %s" % (stamp(), [(i.get("id"), i.get("snippet", {}).get("title")) for i in items]))
+        return False
+    YT_CHANNEL_TITLE = items[0]["snippet"].get("title", "")
+    print("유튜브 채널: %s (%s)" % (YT_CHANNEL_TITLE, YT_CHANNEL_ID))
+    return True
+
+
+def yt_state(it):
+    """유튜브 상태. youtube_status 가 없는 옛 건(PC 가 직접 올린 것)은 '없음'"""
+    return it.get("youtube_status") or "없음"
+
+
+def yt_download(url, path):
+    req = urllib.request.Request(url, headers={"User-Agent": "shorts-publish"})
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r, open(path, "wb") as f:
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+    except urllib.error.HTTPError as e:
+        raise GraphError("R2 영상 받기 실패 HTTP %s (%s)" % (e.code, url), subcode=2207000 if e.code == 404 else None)
+    except Exception as e:
+        raise GraphError("R2 영상 받기 실패: %s" % e)
+    size = os.path.getsize(path)
+    if size < 10000:
+        raise GraphError("R2 영상이 비어 있음 (%d바이트)" % size, subcode=2207000)
+    return size
+
+
+def publish_yt(item, save):
+    """R2 → 유튜브 재개 업로드. publish_at 이 15분 이상 앞이면 예약 공개, 아니면 바로 공개. (video_id, 상태) 를 돌려준다"""
+    from datetime import timedelta
+    when = parse(item["publish_at"])
+    ahead = when > now() + timedelta(minutes=15)      # 유튜브는 과거·임박한 publishAt 을 거절한다
+    status = ({"privacyStatus": "private", "publishAt": when.strftime("%Y-%m-%dT%H:%M:00+09:00"), "selfDeclaredMadeForKids": False}
+              if ahead else {"privacyStatus": "public", "selfDeclaredMadeForKids": False})
+    body = {"snippet": {"title": (item.get("yt_title") or item["id"])[:100], "description": (item.get("yt_description") or "")[:5000],
+                        "tags": list(item.get("yt_tags") or [])[:30], "categoryId": "24", "defaultLanguage": "ko"},
+            "status": status}
+    tmp = (Path("/tmp") if Path("/tmp").is_dir() else ROOT) / (item["id"] + ".tmp.mp4")
+    try:
+        size = yt_download(item["video_url"], str(tmp))
+        print("  R2 에서 받음 %.1fMB" % (size / 1e6))
+        _, h = yt_call("POST", YT_UPLOAD, body=body, headers={"X-Upload-Content-Length": str(size), "X-Upload-Content-Type": "video/mp4"})
+        loc = h.get("Location")
+        if not loc:
+            raise GraphError("재개 업로드 주소(Location) 없음")
+        with open(tmp, "rb") as f:
+            raw = f.read()
+        j, _ = yt_call("PUT", loc, raw=raw, headers={"Content-Type": "video/mp4", "Content-Length": str(size)}, timeout=600)
+    finally:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+    vid = j.get("id")
+    if not vid:
+        raise GraphError("유튜브 응답에 id 없음: %s" % j)
+    return vid, ("예약" if ahead else "공개")
 
 
 def quota_left():
@@ -433,6 +576,8 @@ def handle_error(it, e, tgt, save):
         name, st_key, err_key, att_key, cid_key = "인스타", "status", "last_error", "attempts", "ig_container_id"
     elif tgt == "th":
         name, st_key, err_key, att_key, cid_key = "스레드", "threads_status", "threads_error", "threads_attempts", "threads_container_id"
+    elif tgt == "yt":
+        name, st_key, err_key, att_key, cid_key = "유튜브", "youtube_status", "youtube_error", "youtube_attempts", "youtube_video_id"
     else:
         name, st_key, err_key, att_key, cid_key = "페북", "fb_status", "fb_error", "fb_attempts", "fb_video_id"
     it[err_key] = "%s %s" % (stamp(), e)
@@ -484,13 +629,17 @@ def main():
         due_th = [it for it in q if th_state(it) == "대기" and parse(it["publish_at"]) <= t] if th_ok else []
         fb_ok = check_fb() if VAULT_KEY and IG_SCOPES else False
         due_fb = [it for it in q if fb_state(it) == "대기" and parse(it["publish_at"]) <= t] if fb_ok else []
+        yt_ok = check_youtube() if VAULT_KEY and IG_TOKEN else False
+        due_yt = [it for it in q if yt_state(it) == "대기"] if yt_ok else []
+        for it in due_yt:
+            print("  유튜브 올릴 것: %s (예약 %s, 시도 %s회) %s" % (it["id"], it["publish_at"], it.get("youtube_attempts", 0), (it.get("yt_title") or "")[:40]))
         for it in due_ig:
             print("  인스타 보낼 것: %s (예약 %s, 시도 %s회, 컨테이너 %s)" % (it["id"], it["publish_at"], it.get("attempts", 0), it.get("ig_container_id", "-")))
         for it in due_th:
             print("  스레드 보낼 것: %s (%d자) %s" % (it["id"], len(threads_text(it)), threads_text(it)[:60].replace("\n", " ")))
         for it in due_fb:
             print("  페북 보낼 것: %s (캡션 %d자, video %s)" % (it["id"], len(it.get("fb_caption", "")), it.get("fb_video_id", "-")))
-        if not due_ig and not due_th and not due_fb:
+        if not due_ig and not due_th and not due_fb and not due_yt:
             print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
         return 0
 
@@ -502,14 +651,32 @@ def main():
     due_th = [it for it in q if th_state(it) == "대기" and parse(it["publish_at"]) <= t] if th_ok else []
     fb_ok = check_fb()
     due_fb = [it for it in q if fb_state(it) == "대기" and parse(it["publish_at"]) <= t] if fb_ok else []
+    yt_ok = check_youtube()
+    due_yt = [it for it in q if yt_state(it) == "대기"] if yt_ok else []       # 유튜브는 시각을 안 기다린다(예약 공개로 올림)
 
     retry_th = [it for it in q if it.get("threads_status") == "게시" and not it.get("threads_reply_id") and it.get("threads_reply_error")
                 and it.get("threads_reply_attempts", 0) < MAX_ATTEMPTS] if th_ok else []
-    if not due_ig and not due_th and not due_fb and not retry_th:
+    if not due_ig and not due_th and not due_fb and not due_yt and not retry_th:
         print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
         return 0
 
     exit_code = 0
+    # 유튜브 (먼저. 예약 공개 시각이 임박하기 전에 올려 둔다)
+    for it in due_yt:
+        print("유튜브 업로드: %s (예약 %s)" % (it["id"], it["publish_at"]))
+        try:
+            vid, st = publish_yt(it, save)
+        except GraphError as e:
+            if handle_error(it, e, "yt", save):
+                break
+            continue
+        it["youtube_status"] = st
+        it["youtube_video_id"] = vid
+        it["youtube_url"] = "https://youtube.com/shorts/" + vid
+        it["youtube_uploaded_at"] = stamp()
+        it.pop("youtube_error", None)
+        log(LOG_OK, "%s %s 유튜브 %s (예약 %s) %s %s" % (it["youtube_uploaded_at"], it["id"], st, it["publish_at"], it["youtube_url"], YT_CHANNEL_TITLE))
+        save()
     # 인스타
     if due_ig:
         left = quota_left()
