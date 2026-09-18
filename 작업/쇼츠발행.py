@@ -1,24 +1,28 @@
 # -*- coding: utf-8 -*-
-"""깃허브 액션이 돌리는 인스타 릴스 + 스레드 발행 스크립트. 사용자가 직접 만질 일 없음.
+"""깃허브 액션이 돌리는 인스타 릴스 + 스레드 + 페북 페이지 릴스 발행 스크립트. 사용자가 직접 만질 일 없음.
 이 저장소에는 영상이 없다(영상은 Cloudflare R2). 여기서는 예약표(쇼츠예약.json)만 본다.
 
 하는 일:
   0) 금고(토큰.enc)를 Secrets 의 IG_ACCESS_TOKEN 으로 열어 60일 인스타 토큰·스레드 토큰을 꺼낸다. 토큰 검사.
      인스타 토큰이 죽었으면 아무것도 건드리지 않고 오류기록.txt 한 줄 + 종료코드 1 (액션 실패 → 이메일).
      스레드 토큰이 없거나 죽었으면 인스타만 하고 스레드는 건너뛴다(기록 남김).
+     페북은 같은 60일 사용자 토큰에 pages_manage_posts·publish_video 권한이 있을 때만(없으면 건너뜀, 기록 남김). 페이지 토큰은 매번 GET /{PAGE_ID}?fields=access_token 으로 뽑는다.
   1) 쇼츠예약.json 에서 publish_at 이 지난 건마다
      - 인스타: status 가 "대기"면 POST /{IG_USER_ID}/media (REELS) → 컨테이너 FINISHED 까지 → media_publish → status "게시"
      - 스레드: threads_status 가 "대기"면 POST /{THREADS_USER_ID}/threads (TEXT, 글만) → FINISHED → threads_publish → threads_status "게시"
        → 첫 답글(reply_to_id)에 만세력 문장 + 사이트 링크 (본문엔 링크 없음). 답글 실패는 기록만.
-     - 컨테이너 id 는 만들자마자 예약표에 적어 다음 회차에 이어서 본다.
-  2) 오류는 종류별로 (인스타·스레드 각각):
-     - 인증(190, 102, 10, 200~299): 대기 유지. 인스타면 액션 실패, 스레드면 기록만
+     - 페북: fb_status 가 "대기"면 POST /{PAGE_ID}/video_reels (start) → rupload 에 file_url(R2 주소) → 업로드 완료까지 → (finish, PUBLISHED, description=fb_caption) → fb_status "게시"
+       캡션(fb_caption)은 PC 가 만든 세 번째 벌(존댓말·긴 설명·링크 본문). fb_caption 없는 옛 건은 페북에 안 올린다.
+     - 컨테이너·video id 는 만들자마자 예약표에 적어 다음 회차에 이어서 본다.
+  2) 오류는 종류별로 (인스타·스레드·페북 각각):
+     - 인증(190, 102, 10, 200~299): 대기 유지. 인스타면 액션 실패, 스레드·페북이면 기록만
      - 속도 제한(4, 17, 32, 613, 하루 한도 소진): 대기 유지, 다음 회차
      - 영상 규격(2207xxx, unsupported/aspect ratio/too short/too long, 컨테이너 ERROR): 즉시 "실패" (다시 해도 안 됨)
      - 그 외(전송 실패, 시간 초과 등): attempts +1, 3회까지 대기 유지, 넘으면 "실패". last_error 에 마지막 이유.
 예약표 한 건: id, video_url, caption, publish_at, status(인스타), youtube_url + 액션이 쓰는 ig_container_id, ig_media_id, posted_at, attempts, last_error,
-             threads_text(스레드글.py 가 만든 글), threads_status, threads_container_id, threads_media_id, threads_posted_at, threads_attempts, threads_entities(가림 위치), threads_error, threads_reply_id
-영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(인스타 게시 20시간 뒤).
+             threads_text(스레드글.py 가 만든 글), threads_status, threads_container_id, threads_media_id, threads_posted_at, threads_attempts, threads_entities(가림 위치), threads_error, threads_reply_id,
+             fb_caption, fb_status, fb_video_id, fb_post_id, fb_posted_at, fb_attempts, fb_error
+영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(인스타 게시 20시간 뒤. 스레드·페북이 아직 대기면 48시간까지).
 로컬 시험: python 작업/쇼츠발행.py --dry-run  (토큰 없어도 됨. 아무것도 안 바꿈)
 """
 import os
@@ -40,8 +44,13 @@ IG_USER_ID = os.environ.get("IG_USER_ID", "").strip()
 VAULT_KEY = os.environ.get("IG_ACCESS_TOKEN", "").strip()   # 금고 열쇠(만료 없는 페이지 토큰). 게시에는 안 쓴다
 IG_TOKEN = ""                                                 # 게시용 60일 인스타 토큰. 금고에서 꺼낸다
 TH_TOKEN, TH_USER_ID, TH_USERNAME = "", "", ""                # 스레드. 금고에 있으면 쓴다
+FB_TOKEN, FB_PAGE_NAME = "", ""                               # 페북 페이지 토큰(사용자 토큰으로 매번 뽑음). 권한 있을 때만
+IG_SCOPES = set()                                             # 사용자 토큰 권한(debug_token). 페북 권한 확인용
 IG_USERNAME = "luck.arcade"           # 운빨연구소. 다른 계정이면 게시 전에 멈춘다
+PAGE_ID = "1339892089198082"          # 페이스북 페이지 hulit (릴스 올리는 곳). = 토큰갱신.py PAGE_ID
+FB_SCOPES = {"pages_manage_posts", "publish_video"}   # 페이지 릴스에 필요한 권한. 없으면 PC 에서 python fb_token.py
 GRAPH = "https://graph.facebook.com/v26.0/"
+RUPLOAD = "https://rupload.facebook.com/video-upload/v26.0/"
 THREADS = "https://graph.threads.net/v1.0/"
 KST = ZoneInfo("Asia/Seoul")
 DRY = "--dry-run" in sys.argv
@@ -134,6 +143,10 @@ def threads(method, path, **params):
     return _call(THREADS, TH_TOKEN, method, path, **params)
 
 
+def fb(method, path, **params):
+    return _call(GRAPH, FB_TOKEN, method, path, **params)
+
+
 # ── 0) 금고·토큰 검사 ─────────────────────────────────────────────────
 def open_vault():
     """토큰.enc 를 열어 IG_TOKEN(+스레드)을 채운다. 실패면 이유 문자열."""
@@ -174,6 +187,7 @@ def check_token():
         return "debug_token 실패: %s" % e
     info = {k: d.get(k) for k in ("type", "is_valid", "expires_at", "data_access_expires_at")}
     print("인스타 토큰:", info, "scopes:", d.get("scopes"))
+    IG_SCOPES.clear(); IG_SCOPES.update(d.get("scopes") or [])
     if not d.get("is_valid"):
         return "토큰이 유효하지 않음 (is_valid=false). token-refresh 실행 또는 PC 에서 ig_token.py"
     if d.get("expires_at"):
@@ -219,6 +233,26 @@ def check_threads():
         return False
     TH_USERNAME = me.get("username") or TH_USERNAME
     print("스레드 계정: @%s (%s)" % (TH_USERNAME, TH_USER_ID))
+    return True
+
+
+def check_fb():
+    """페북 페이지 릴스. 사용자 토큰에 권한 2개가 있으면 페이지 토큰을 뽑아 True. 없거나 실패면 False (인스타·스레드는 계속)"""
+    global FB_TOKEN, FB_PAGE_NAME
+    missing = FB_SCOPES - IG_SCOPES
+    if missing:
+        print("페북: 권한 없음(%s) → 건너뜀 (PC 에서 python fb_token.py 로 권한 추가)" % ", ".join(sorted(missing)))
+        return False
+    try:
+        p = graph("GET", PAGE_ID, fields="name,access_token")
+    except GraphError as e:
+        log(LOG_ERR, "%s 페북 페이지 토큰 실패 (페북만 건너뜀): %s" % (stamp(), e))
+        return False
+    FB_TOKEN, FB_PAGE_NAME = p.get("access_token", ""), p.get("name", "")
+    if not FB_TOKEN:
+        log(LOG_ERR, "%s 페북 페이지 토큰 없음 (페북만 건너뜀): %s" % (stamp(), {k: p.get(k) for k in ("id", "name")}))
+        return False
+    print("페북 페이지: %s (%s)" % (FB_PAGE_NAME, PAGE_ID))
     return True
 
 
@@ -328,12 +362,79 @@ def reply_th(item, mid):
         log(LOG_ERR, "%s %s 스레드 답글(링크) 실패 (본문은 게시됨): %s" % (stamp(), item["id"], e))
 
 
+def fb_state(it):
+    """페북 상태. fb_caption 이 있는 건만 대상(PC 가 페북 분기 붙은 뒤 등록한 것). 없으면 '없음'"""
+    return it.get("fb_status") or ("대기" if it.get("fb_caption") else "없음")
+
+
+def fb_upload(video_id, url):
+    """rupload 에 file_url 로 올리기(페북이 R2 에서 직접 받아 간다). 성공이면 None"""
+    req = urllib.request.Request(RUPLOAD + video_id, b"", method="POST",
+                                 headers={"Authorization": "OAuth " + FB_TOKEN, "file_url": url})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            j = json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        try:
+            err = json.loads(body).get("error", {})
+        except Exception:
+            err = {}
+        raise GraphError(err.get("message") or body[:300], code=err.get("code"), subcode=err.get("error_subcode"), http=e.code)
+    except Exception as e:
+        raise GraphError("전송 실패: %s" % e)
+    if not j.get("success"):
+        raise GraphError("rupload 응답: %s" % j)
+
+
+def fb_wait(video_id, phase):
+    """status.<phase>.status 가 complete 면 None. error 면 GraphError(spec). 5분 넘으면 GraphError(other)"""
+    st = {}
+    for _ in range(POLL_MAX):
+        st = fb("GET", video_id, fields="status").get("status") or {}
+        ph = (st.get(phase) or {}).get("status")
+        if ph == "complete":
+            return
+        if ph == "error" or st.get("video_status") == "error":
+            raise GraphError("페북 영상 %s 오류: %s" % (phase, (st.get(phase) or {}).get("errors") or st.get("video_status")), subcode=2207000)
+        time.sleep(POLL_SEC)
+    raise GraphError("페북 영상 %s %d분 초과 (status=%s)" % (phase, POLL_SEC * POLL_MAX // 60, st.get("video_status")))
+
+
+def publish_fb(item, save):
+    """페이지 릴스: start → rupload(file_url) → 업로드 완료 → finish(PUBLISHED, description). post id 를 돌려준다."""
+    vid = item.get("fb_video_id")
+    if vid:
+        print("  페북 이어서: video %s" % vid)
+    else:
+        r = fb("POST", PAGE_ID + "/video_reels", upload_phase="start")
+        vid = r.get("video_id")
+        if not vid:
+            raise GraphError("페북 video_id 없음: %s" % r)
+        item["fb_video_id"] = vid
+        save()
+        print("  페북 video %s 만듦" % vid)
+    st = (fb("GET", vid, fields="status").get("status") or {})
+    if (st.get("uploading_phase") or {}).get("status") != "complete":
+        fb_upload(vid, item["video_url"])
+        fb_wait(vid, "uploading_phase")
+    if (st.get("publishing_phase") or {}).get("status") == "complete":
+        return st.get("publishing_phase", {}).get("post_id") or vid    # 이미 게시된 것(지난 회차에 finish 뒤 저장 못 한 경우)
+    r = fb("POST", PAGE_ID + "/video_reels", upload_phase="finish", video_id=vid, video_state="PUBLISHED",
+           description=item.get("fb_caption", ""))
+    if not r.get("success"):
+        raise GraphError("페북 finish 응답: %s" % r)
+    return r.get("post_id") or vid
+
+
 def handle_error(it, e, tgt, save):
     """오류 종류별 처리. tgt = 'ig' | 'th'. 인증 오류면 True(이 대상 나머지 건 중단)"""
     if tgt == "ig":
         name, st_key, err_key, att_key, cid_key = "인스타", "status", "last_error", "attempts", "ig_container_id"
-    else:
+    elif tgt == "th":
         name, st_key, err_key, att_key, cid_key = "스레드", "threads_status", "threads_error", "threads_attempts", "threads_container_id"
+    else:
+        name, st_key, err_key, att_key, cid_key = "페북", "fb_status", "fb_error", "fb_attempts", "fb_video_id"
     it[err_key] = "%s %s" % (stamp(), e)
     kind = e.kind
     if kind == "auth":
@@ -381,11 +482,15 @@ def main():
         else:
             print("[dry-run] 금고 열쇠 없음 → 토큰 검사 건너뜀")
         due_th = [it for it in q if th_state(it) == "대기" and parse(it["publish_at"]) <= t] if th_ok else []
+        fb_ok = check_fb() if VAULT_KEY and IG_SCOPES else False
+        due_fb = [it for it in q if fb_state(it) == "대기" and parse(it["publish_at"]) <= t] if fb_ok else []
         for it in due_ig:
             print("  인스타 보낼 것: %s (예약 %s, 시도 %s회, 컨테이너 %s)" % (it["id"], it["publish_at"], it.get("attempts", 0), it.get("ig_container_id", "-")))
         for it in due_th:
             print("  스레드 보낼 것: %s (%d자) %s" % (it["id"], len(threads_text(it)), threads_text(it)[:60].replace("\n", " ")))
-        if not due_ig and not due_th:
+        for it in due_fb:
+            print("  페북 보낼 것: %s (캡션 %d자, video %s)" % (it["id"], len(it.get("fb_caption", "")), it.get("fb_video_id", "-")))
+        if not due_ig and not due_th and not due_fb:
             print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
         return 0
 
@@ -395,10 +500,12 @@ def main():
         return 1
     th_ok = check_threads()
     due_th = [it for it in q if th_state(it) == "대기" and parse(it["publish_at"]) <= t] if th_ok else []
+    fb_ok = check_fb()
+    due_fb = [it for it in q if fb_state(it) == "대기" and parse(it["publish_at"]) <= t] if fb_ok else []
 
     retry_th = [it for it in q if it.get("threads_status") == "게시" and not it.get("threads_reply_id") and it.get("threads_reply_error")
                 and it.get("threads_reply_attempts", 0) < MAX_ATTEMPTS] if th_ok else []
-    if not due_ig and not due_th and not retry_th:
+    if not due_ig and not due_th and not due_fb and not retry_th:
         print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
         return 0
 
@@ -442,6 +549,21 @@ def main():
         log(LOG_OK, "%s %s 스레드 게시 (예약 %s) post %s @%s" % (it["threads_posted_at"], it["id"], it["publish_at"], mid, TH_USERNAME))
         save()
         reply_th(it, mid)
+        save()
+    # 페북 페이지 릴스
+    for it in due_fb:
+        print("페북 발행: %s (예약 %s)" % (it["id"], it["publish_at"]))
+        try:
+            pid = publish_fb(it, save)
+        except GraphError as e:
+            if handle_error(it, e, "fb", save):
+                break
+            continue
+        it["fb_status"] = "게시"
+        it["fb_posted_at"] = stamp()
+        it["fb_post_id"] = pid
+        it.pop("fb_error", None)
+        log(LOG_OK, "%s %s 페북 게시 (예약 %s) post %s %s" % (it["fb_posted_at"], it["id"], it["publish_at"], pid, FB_PAGE_NAME))
         save()
     # 본문은 올라갔는데 답글(링크)만 실패한 건 → 다음 회차에 답글만 다시 (3회까지)
     if th_ok:
