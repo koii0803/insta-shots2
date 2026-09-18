@@ -27,6 +27,7 @@ jobs:
       - name: 하루치 만들기
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
         run: python 작업/스레드하루치.py ${{ inputs.day != '' && format('--day {0}', inputs.day) || '' }}
       - name: 예약표 커밋
         if: always()

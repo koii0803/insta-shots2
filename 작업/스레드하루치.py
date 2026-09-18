@@ -35,7 +35,8 @@ DONE = ROOT / "스레드하루치기록.json"
 TOPICS = ROOT / "스레드소재.txt"          # 사람 글 소재. 한 줄에 하나, 위에서부터 쓰고 지운다. 실제 있었던 일만
 KST = ZoneInfo("Asia/Seoul")
 DRY = "--dry-run" in sys.argv
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_KEYS = [k for k in (os.environ.get("GEMINI_API_KEY", "").strip(), os.environ.get("GEMINI_API_KEY_2", "").strip()) if k]   # 1번 키 하루 20회 무료 한도(429)면 2번 키로 (14번 스킬과 같은 방식)
+GEMINI_KEY = GEMINI_KEYS[0] if GEMINI_KEYS else ""
 GEMINI_MODEL = "gemini-3.5-flash"     # = 14.블로그소제목AI썸네일 스킬과 같은 모델(고정)
 GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"
 
@@ -92,9 +93,17 @@ def gemini(prompt):
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                        "generationConfig": {"temperature": 1.0, "maxOutputTokens": 2000,
                                             "thinkingConfig": {"thinkingBudget": 0}}}).encode("utf-8")   # 생각 토큰이 출력 예산을 먹어 글이 잘림(2026-09-18 겪음)
+    global GEMINI_KEY
     req = urllib.request.Request(GEMINI % (GEMINI_MODEL, GEMINI_KEY), body, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=60) as r:
-        j = json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            j = json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 429 and GEMINI_KEY != GEMINI_KEYS[-1]:
+            GEMINI_KEY = GEMINI_KEYS[GEMINI_KEYS.index(GEMINI_KEY) + 1]
+            print("  제미나이 한도(429) → 다음 키로")
+            return gemini(prompt)
+        raise
     text = "".join(p.get("text", "") for p in j["candidates"][0]["content"]["parts"]).strip()
     text = text.strip('"“”\'` ').replace("—", ",").strip()
     text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
