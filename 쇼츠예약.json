@@ -195,5 +195,41 @@
    }
   ],
   "threads_status": "대기"
+ },
+ {
+  "id": "threads-일상-20260919-0757",
+  "video_url": "",
+  "caption": "",
+  "publish_at": "2026-09-19 07:57",
+  "status": "없음",
+  "youtube_url": "",
+  "threads_kind": "일상",
+  "threads_text": "토요일 아침인데 회사 갈 일도 없으면서 눈이 일찍 떠졌네.\n침대에 누워서 아이패드로 사주 사이트 코드 수정하는 걸로 하루를 시작하는 중이야.\n다들 주말 아침인데 늦잠 자고 있어, 아니면 나처럼 벌써 깼어?",
+  "threads_entities": [],
+  "threads_status": "대기"
+ },
+ {
+  "id": "threads-일상-20260919-1257",
+  "video_url": "",
+  "caption": "",
+  "publish_at": "2026-09-19 12:57",
+  "status": "없음",
+  "youtube_url": "",
+  "threads_kind": "일상",
+  "threads_text": "토요일 낮인데 평일이랑 똑같이 모니터 앞에 앉아있네.\n회사 안 가도 매일 사주 코드 들여다보니까 요일 감각이 사라지는 것 같다.\n다들 주말 점심 메뉴 뭐 먹고 있어?",
+  "threads_entities": [],
+  "threads_status": "대기"
+ },
+ {
+  "id": "threads-사람-20260919-2101",
+  "video_url": "",
+  "caption": "",
+  "publish_at": "2026-09-19 21:01",
+  "status": "없음",
+  "youtube_url": "",
+  "threads_kind": "사람",
+  "threads_text": "나 팔자오빠인데 이제 막 첫 사업자등록 하려다 멈칫한 초보야.\n간이과세자랑 일반과세자 차이점을 공부해도 내 상황에 뭐가 맞는지 전혀 모르겠다.\n초기 비용 많이 드는데 세금 덜 내려면 진짜 뭐로 신청해야 해?\n모르면 가만히 있으라든가 답답하다고 욕해도 되니까 한 수만 가르쳐주라.",
+  "threads_entities": [],
+  "threads_status": "대기"
  }
 ]
