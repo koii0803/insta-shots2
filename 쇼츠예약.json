@@ -149,5 +149,63 @@
   ],
   "youtube_video_id": "Zypu0mgutbE",
   "youtube_uploaded_at": "2026-09-18 23:02"
+ },
+ {
+  "id": "threads-일상-20260919-0834",
+  "video_url": "",
+  "caption": "",
+  "publish_at": "2026-09-19 08:34",
+  "status": "없음",
+  "youtube_url": "",
+  "threads_kind": "일상",
+  "threads_text": "토요일 아침인데 회사 안 가도 눈이 떠지는 건 병일까.\n이불 속에서 노트북 켜고 사주 사이트 코드 수정하는데 밖에서 빗소리 들리네.\n주말인데 다들 오늘 뭐 하면서 보낼 거야?",
+  "threads_entities": [],
+  "threads_status": "대기"
+ },
+ {
+  "id": "threads-띠-20260919-1222",
+  "video_url": "",
+  "caption": "",
+  "publish_at": "2026-09-19 12:22",
+  "status": "없음",
+  "youtube_url": "",
+  "threads_kind": "띠",
+  "threads_text": "나 오늘은 말띠 차례야. 짧게 간다\n🐴 말띠(1978 / 1990 / 2002)\n밝고 빠른데 정작 자기 자리는 자주 바꿔\n올해 말띠는 리셋 해야. 새로 짜는 판이 앞으로 몇 년을 정해\n흐려졌던 <자리 이동 · 관계 정리 · 인간관계> 기준이\n내 쪽으로 돌아오기 시작하고\n기준을 잡는 순간 사람이 붙어\n올해는 유난히\n<이사·환경 변화 · 공부 흐름 · 사람 소개 · 해외·먼 곳 기회> 판이 새로 짜인다\n가을 지나기 전에 방향 잡아\n좋은 말만 안 해준다\n말띠는 네 년생 넣으면 30초. 링크는 첫 답글에\n너, 남 기준 내려놓으면 바로 풀린다.\n복채는 스하리면 충분해",
+  "threads_entities": [
+   {
+    "entity_type": "SPOILER",
+    "offset": 176,
+    "length": 48
+   },
+   {
+    "entity_type": "SPOILER",
+    "offset": 225,
+    "length": 9
+   }
+  ],
+  "threads_status": "대기"
+ },
+ {
+  "id": "threads-띠-20260919-2325",
+  "video_url": "",
+  "caption": "",
+  "publish_at": "2026-09-19 23:25",
+  "status": "없음",
+  "youtube_url": "",
+  "threads_kind": "띠",
+  "threads_text": "나 호랑이띠 올해 흐름 보고 그냥 못 지나가겠더라\n🐯 호랑이띠(1986 / 1998 / 2010)\n판이 커질수록 살아나는 사람이야\n올해 흐름이 호랑이띠 쪽으로 붙는 해야. 막혀 있던 문이 하나씩 열리는 구조\n막혀 있던 <오래된 인연 · 인간관계 · 이사> 쪽이\n하나씩 열리기 시작하고\n멈췄던 연락이 다시 닿기 시작해\n올해는 유난히\n<이사·환경 변화 · 수입 길 늘어나기 · 관계 정리 · 사람 소개 · 실력 인정> 크게 움직인다\n가을 지나기 전에 방향 잡아\n나 돌려 말 안 한다\n댓글 기다릴 필요 없어. 네 년생은 링크에서 30초\n너, 조용히 큰길로 올라탄다.\n복채는 스하리로 받을게",
+  "threads_entities": [
+   {
+    "entity_type": "SPOILER",
+    "offset": 185,
+    "length": 54
+   },
+   {
+    "entity_type": "SPOILER",
+    "offset": 240,
+    "length": 9
+   }
+  ],
+  "threads_status": "대기"
  }
 ]
