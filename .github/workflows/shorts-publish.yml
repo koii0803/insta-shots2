@@ -1,11 +1,11 @@
 # 인스타 릴스 예약발행 — 깨어날 때마다 쇼츠예약.json 의 시간 지난 건을 메타 그래프 API로 직접 게시한다(Make 없음). 영상 삭제는 PC 쪽.
 # PC 가 꺼져 있어도 돈다. 토큰은 저장소 Settings → Secrets and variables → Actions → IG_USER_ID, IG_ACCESS_TOKEN 에 등록.
-# 깨우는 것: 매시 정각 cron(깃허브가 수십 분~몇 시간 미룸) + workflow_dispatch(Cloudflare Worker 가 10분마다 부름, PC에서 손으로도 됨).
+# 깨우는 것: 30분마다 cron(2026-09-18 스레드 글 시각 맞추려고. 깃허브가 수십 분~몇 시간 미룸) + workflow_dispatch(Cloudflare Worker 가 10분마다 부름, PC에서 손으로도 됨).
 # 토큰이 죽었으면 스크립트가 종료코드 1 → 이 워크플로 실패 → 깃허브가 이메일로 알린다. 결과 커밋은 실패해도 한다(if: always).
 name: shorts-publish
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 concurrency:

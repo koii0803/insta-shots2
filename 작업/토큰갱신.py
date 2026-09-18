@@ -129,12 +129,31 @@ def main():
             th_state = "연장 실패: %s" % e
             print("스레드 토큰 연장 실패(인스타는 계속): %s" % e)
 
+    # 4-b) 카카오 refresh_token 연장 (금고에 있을 때만). refresh 로 access 를 받으면 만료 30일 안일 때 새 refresh 가 같이 온다
+    kk_state = "없음"
+    if v.get("kakao_refresh_token") and v.get("kakao_client_secret"):
+        try:
+            data = urllib.parse.urlencode({"grant_type": "refresh_token", "client_id": "5ef3d1fd0874a38dc6b62453503218a0",
+                                           "client_secret": v["kakao_client_secret"], "refresh_token": v["kakao_refresh_token"]}).encode()
+            with urllib.request.urlopen(urllib.request.Request("https://kauth.kakao.com/oauth/token", data), timeout=30) as r:
+                kj = json.load(r)
+            if kj.get("refresh_token"):
+                v["kakao_refresh_token"] = kj["refresh_token"]
+                v["kakao_refresh_expires_at"] = int(time.time()) + int(kj.get("refresh_token_expires_in", 0))
+                kk_state = "refresh 갱신, 만료 %s" % kst(v["kakao_refresh_expires_at"])
+            else:
+                kk_state = "아직 유효(만료 %s)" % kst(v.get("kakao_refresh_expires_at"))
+            print("카카오: %s" % kk_state)
+        except Exception as e:
+            kk_state = "연장 실패: %s" % e
+            print("카카오 연장 실패(다른 건 계속): %s" % e)
+
     # 5) 금고 갱신 + 상태
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
     v.update({"user_token": new, "expires_at": exp, "updated": now})
     금고.save(KEY, v)
     STATE.write_text(json.dumps({"갱신": now, "만료": kst(exp), "data_access": kst(d.get("data_access_expires_at")),
-                                 "인스타": "@" + IG_USERNAME, "스레드": th_state}, ensure_ascii=False, indent=1), encoding="utf-8")
+                                 "인스타": "@" + IG_USERNAME, "스레드": th_state, "카카오": kk_state}, ensure_ascii=False, indent=1), encoding="utf-8")
     print("금고·토큰상태.json 갱신. 끝.")
 
 

@@ -1,0 +1,38 @@
+# 스레드 답글 알림 — 3시간마다. 내 글에 새 답글이 있으면 카카오톡 "나에게 보내기"로 [상대 글 + AI 답 초안 + 답글ID]. (2026-09-18)
+# 답글을 다는 일은 하지 않는다. 사장님이 카톡 보고 정하면 PC 에서 python 스레드답글찾기.py --reply.
+# 카카오 토큰이 금고에 없으면(아직 kakao_token.py 안 함) 그냥 종료코드 1 — 빨강이지만 다른 워크플로엔 영향 없음.
+name: threads-replies
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: shorts-publish
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q pynacl
+      - name: 답글 확인 → 카톡
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: python 작업/답글알림.py
+      - name: 기록 커밋
+        if: always()
+        run: |
+          git config user.name "threads-replies"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "답글 알림 기록"
+          for i in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            echo "푸시 실패, 다시 ($i/3)"; sleep 5
+          done
+          exit 1
