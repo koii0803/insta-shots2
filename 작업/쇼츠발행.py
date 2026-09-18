@@ -311,6 +311,7 @@ def publish_th(item, save):
 def reply_th(item, mid):
     """게시 뒤 첫 답글에 만세력 문장 + 사이트 링크 (본문 링크 금지라 답글로). 실패해도 본문 게시는 유효 → 기록만."""
     try:
+        time.sleep(30)                                     # 본문 게시 직후 바로 쏘면 500 (2026-09-18 고정글에서 겪음)
         r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=THREADS_REPLY, reply_to_id=mid)
         rcid = r.get("id")
         if not rcid:
@@ -395,7 +396,9 @@ def main():
     th_ok = check_threads()
     due_th = [it for it in q if th_state(it) == "대기" and parse(it["publish_at"]) <= t] if th_ok else []
 
-    if not due_ig and not due_th:
+    retry_th = [it for it in q if it.get("threads_status") == "게시" and not it.get("threads_reply_id") and it.get("threads_reply_error")
+                and it.get("threads_reply_attempts", 0) < MAX_ATTEMPTS] if th_ok else []
+    if not due_ig and not due_th and not retry_th:
         print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
         return 0
 
@@ -440,6 +443,17 @@ def main():
         save()
         reply_th(it, mid)
         save()
+    # 본문은 올라갔는데 답글(링크)만 실패한 건 → 다음 회차에 답글만 다시 (3회까지)
+    if th_ok:
+        for it in q:
+            if it.get("threads_status") == "게시" and it.get("threads_media_id") and not it.get("threads_reply_id")                     and it.get("threads_reply_error") and it.get("threads_reply_attempts", 0) < MAX_ATTEMPTS:
+                it["threads_reply_attempts"] = it.get("threads_reply_attempts", 0) + 1
+                print("스레드 답글 재시도: %s (%d회)" % (it["id"], it["threads_reply_attempts"]))
+                reply_th(it, it["threads_media_id"])
+                if it.get("threads_reply_id"):
+                    it.pop("threads_reply_error", None)
+                    log(LOG_OK, "%s %s 스레드 첫 답글(링크) %s" % (stamp(), it["id"], it["threads_reply_id"]))
+                save()
     return exit_code
 
 
