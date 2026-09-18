@@ -8,7 +8,8 @@
      스레드 토큰이 없거나 죽었으면 인스타만 하고 스레드는 건너뛴다(기록 남김).
   1) 쇼츠예약.json 에서 publish_at 이 지난 건마다
      - 인스타: status 가 "대기"면 POST /{IG_USER_ID}/media (REELS) → 컨테이너 FINISHED 까지 → media_publish → status "게시"
-     - 스레드: threads_status 가 "대기"면 POST /{THREADS_USER_ID}/threads (VIDEO, text) → FINISHED → threads_publish → threads_status "게시"
+     - 스레드: threads_status 가 "대기"면 POST /{THREADS_USER_ID}/threads (TEXT, 글만) → FINISHED → threads_publish → threads_status "게시"
+       → 첫 답글(reply_to_id)에 만세력 문장 + 사이트 링크 (본문엔 링크 없음). 답글 실패는 기록만.
      - 컨테이너 id 는 만들자마자 예약표에 적어 다음 회차에 이어서 본다.
   2) 오류는 종류별로 (인스타·스레드 각각):
      - 인증(190, 102, 10, 200~299): 대기 유지. 인스타면 액션 실패, 스레드면 기록만
@@ -16,7 +17,7 @@
      - 영상 규격(2207xxx, unsupported/aspect ratio/too short/too long, 컨테이너 ERROR): 즉시 "실패" (다시 해도 안 됨)
      - 그 외(전송 실패, 시간 초과 등): attempts +1, 3회까지 대기 유지, 넘으면 "실패". last_error 에 마지막 이유.
 예약표 한 건: id, video_url, caption, publish_at, status(인스타), youtube_url + 액션이 쓰는 ig_container_id, ig_media_id, posted_at, attempts, last_error,
-             threads_text(없으면 caption 에서 만듦), threads_status, threads_container_id, threads_media_id, threads_posted_at, threads_attempts, threads_error
+             threads_text(스레드글.py 가 만든 글), threads_status, threads_container_id, threads_media_id, threads_posted_at, threads_attempts, threads_entities(가림 위치), threads_error, threads_reply_id
 영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(인스타 게시 20시간 뒤).
 로컬 시험: python 작업/쇼츠발행.py --dry-run  (토큰 없어도 됨. 아무것도 안 바꿈)
 """
@@ -47,6 +48,7 @@ DRY = "--dry-run" in sys.argv
 MAX_ATTEMPTS = 3
 POLL_SEC, POLL_MAX = 10, 30          # 10초 × 30 = 5분
 THREADS_TEXT_MAX = 500
+THREADS_REPLY = "사람이 봐주는 데 아님. 사주 달력표 그대로 뽑아주는 곳. 네 년생 30초, 링크 ↓" + "\n" + "https://sajuarcade.com"   # = PC config.THREADS_REPLY
 
 AUTH_CODES = {190, 102, 10} | set(range(200, 300))
 RATE_CODES = {4, 17, 32, 613}
@@ -283,24 +285,46 @@ def threads_text(item):
 
 
 def publish_th(item, save):
+    """글만(TEXT) 게시. 영상·이미지 없음 (2026-09-18 스레드 실측: 답글 상위 글 전부 글만). 본문엔 링크 없음."""
     cid = item.get("threads_container_id")
     if cid:
         print("  스레드 이어서: 컨테이너 %s" % cid)
     else:
-        r = threads("POST", TH_USER_ID + "/threads", media_type="VIDEO", video_url=item["video_url"], text=threads_text(item))
+        extra = {}
+        if item.get("threads_entities"):                      # 가림(스포일러). PC 에서 AI가 고른 문구 위치. 누르면 보인다
+            extra["text_entities"] = json.dumps(item["threads_entities"])
+        r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=threads_text(item), **extra)
         cid = r.get("id")
         if not cid:
             raise GraphError("스레드 컨테이너 id 없음: %s" % r)
         item["threads_container_id"] = cid
         save()
         print("  스레드 컨테이너 %s 만듦" % cid)
-        time.sleep(30)                     # 스레드는 30초 뒤부터 상태 확인 권장
     wait_container(threads, cid, "status,error_message")
     pub = threads("POST", TH_USER_ID + "/threads_publish", creation_id=cid)
     mid = pub.get("id")
     if not mid:
         raise GraphError("threads_publish 응답에 id 없음: %s" % pub)
     return mid
+
+
+def reply_th(item, mid):
+    """게시 뒤 첫 답글에 만세력 문장 + 사이트 링크 (본문 링크 금지라 답글로). 실패해도 본문 게시는 유효 → 기록만."""
+    try:
+        r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=THREADS_REPLY, reply_to_id=mid)
+        rcid = r.get("id")
+        if not rcid:
+            raise GraphError("답글 컨테이너 id 없음: %s" % r)
+        wait_container(threads, rcid, "status,error_message")
+        pub = threads("POST", TH_USER_ID + "/threads_publish", creation_id=rcid)
+        rid = pub.get("id")
+        if not rid:
+            raise GraphError("답글 threads_publish 응답에 id 없음: %s" % pub)
+        item["threads_reply_id"] = rid
+        print("  스레드 첫 답글(링크) %s" % rid)
+    except GraphError as e:
+        item["threads_reply_error"] = "%s %s" % (stamp(), e)
+        log(LOG_ERR, "%s %s 스레드 답글(링크) 실패 (본문은 게시됨): %s" % (stamp(), item["id"], e))
 
 
 def handle_error(it, e, tgt, save):
@@ -413,6 +437,8 @@ def main():
         it["threads_media_id"] = mid
         it.pop("threads_error", None)
         log(LOG_OK, "%s %s 스레드 게시 (예약 %s) post %s @%s" % (it["threads_posted_at"], it["id"], it["publish_at"], mid, TH_USERNAME))
+        save()
+        reply_th(it, mid)
         save()
     return exit_code
 
