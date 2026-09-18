@@ -16,7 +16,7 @@
      - 그 외(전송 실패, 시간 초과, 9007 등): attempts +1, 3회까지 대기 유지, 넘으면 "실패"
      last_error 에 마지막 이유를 남긴다.
 영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(게시 20시간 뒤).
-토큰은 저장소에 없고 깃허브 Secrets(IG_USER_ID, IG_ACCESS_TOKEN)로만 들어온다. 만료 없는 페이지 토큰.
+게시 토큰 = 60일 사용자 토큰. 저장소의 금고(토큰.enc)에 암호화돼 있고, 열쇠는 Secrets IG_ACCESS_TOKEN(페이지 토큰). 갱신은 token-refresh 워크플로가 매주.
 로컬 시험: python 작업/쇼츠발행.py --dry-run  (토큰 없어도 됨. 아무것도 안 바꿈)
 """
 import os
@@ -34,7 +34,9 @@ QUEUE = ROOT / "쇼츠예약.json"
 LOG_OK = ROOT / "발행기록.txt"
 LOG_ERR = ROOT / "오류기록.txt"
 IG_USER_ID = os.environ.get("IG_USER_ID", "").strip()
-IG_TOKEN = os.environ.get("IG_ACCESS_TOKEN", "").strip()
+VAULT_KEY = os.environ.get("IG_ACCESS_TOKEN", "").strip()   # 금고 열쇠(만료 없는 페이지 토큰). 게시에는 안 쓴다
+IG_TOKEN = ""                                                 # 게시용 60일 토큰. 금고(토큰.enc)에서 꺼낸다
+TOKEN_EXPIRES = 0
 IG_USERNAME = "luck.arcade"           # 운빨연구소. 다른 계정이면 게시 전에 멈춘다
 GRAPH = "https://graph.facebook.com/v26.0/"
 KST = ZoneInfo("Asia/Seoul")
@@ -54,6 +56,30 @@ except Exception:
 
 def now():
     return datetime.now(KST).replace(tzinfo=None)
+
+
+def open_vault():
+    """토큰.enc 를 열어 60일 토큰을 IG_TOKEN 에 넣는다. 실패면 이유 문자열."""
+    global IG_TOKEN, TOKEN_EXPIRES
+    if not VAULT_KEY:
+        return "IG_ACCESS_TOKEN(금고 열쇠) 비어 있음"
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import 금고
+    except ImportError:
+        return "pynacl 없음 (워크플로에 pip install pynacl)"
+    if not 금고.VAULT.exists():
+        # 금고가 아직 없으면 열쇠(페이지 토큰)로 그냥 게시한다. 발행이 끊기는 구간이 없게.
+        IG_TOKEN = VAULT_KEY
+        print("토큰.enc 없음 → 페이지 토큰으로 게시 (PC 에서 python ig_token.py 하면 60일 토큰으로 바뀜)")
+        return None
+    try:
+        v = 금고.load(VAULT_KEY)
+    except Exception as e:
+        return "금고를 못 열음(열쇠 태그 %s): %s" % (금고.key_tag(VAULT_KEY), type(e).__name__)
+    IG_TOKEN = v.get("user_token", "")
+    TOKEN_EXPIRES = v.get("expires_at") or 0
+    return None if IG_TOKEN else "금고 안에 토큰 없음"
 
 
 def stamp():
@@ -122,8 +148,11 @@ def graph(method, path, **params):
 # ── 0) 토큰 검사 ──────────────────────────────────────────────────────
 def check_token():
     """토큰 값은 절대 출력하지 않는다. 문제면 이유 문자열, 정상이면 None"""
-    if not IG_USER_ID or not IG_TOKEN:
-        return "IG_USER_ID / IG_ACCESS_TOKEN 비어 있음 (저장소 Settings → Secrets 에 등록)"
+    if not IG_USER_ID:
+        return "IG_USER_ID 비어 있음 (저장소 Settings → Secrets 에 등록)"
+    err = open_vault()
+    if err:
+        return err
     try:
         d = graph("GET", "debug_token", input_token=IG_TOKEN).get("data", {})
     except GraphError as e:
@@ -131,12 +160,15 @@ def check_token():
     info = {k: d.get(k) for k in ("type", "is_valid", "expires_at", "data_access_expires_at")}
     print("토큰:", info, "scopes:", d.get("scopes"))
     if not d.get("is_valid"):
-        return "토큰이 유효하지 않음 (is_valid=false). PC에서 ig_token.py 로 다시 만들 것"
+        return "토큰이 유효하지 않음 (is_valid=false). token-refresh 실행 또는 PC 에서 ig_token.py"
     if d.get("expires_at"):
         exp = datetime.fromtimestamp(d["expires_at"], KST).replace(tzinfo=None)
-        print("주의: 만료 있는 토큰 (%s 까지). 페이지 토큰(만료 없음)으로 바꿀 것" % exp.strftime("%Y-%m-%d %H:%M"))
+        left = (exp - now()).days
+        print("60일 토큰 만료: %s (%d일 남음)" % (exp.strftime("%Y-%m-%d %H:%M"), left))
         if exp <= now():
-            return "토큰 만료됨 (%s)" % exp.strftime("%Y-%m-%d %H:%M")
+            return "60일 토큰 만료됨 (%s). token-refresh 가 안 돈 것. PC 에서 ig_token.py" % exp.strftime("%Y-%m-%d %H:%M")
+        if left <= 7:
+            print("주의: 만료 7일 이내. token-refresh 워크플로가 도는지 확인")
     dae = d.get("data_access_expires_at")
     if dae:
         left = (datetime.fromtimestamp(dae, KST).replace(tzinfo=None) - now()).days
@@ -219,12 +251,12 @@ def main():
 
     if DRY:
         print("[dry-run] 아무것도 바꾸지 않음")
-        if IG_TOKEN:
+        if VAULT_KEY:
             err = check_token()
             if err:
                 print("토큰 검사 실패:", err)
         else:
-            print("[dry-run] 토큰 없음 → 토큰 검사 건너뜀")
+            print("[dry-run] 금고 열쇠 없음 → 토큰 검사 건너뜀")
         for it in due:
             print("  보낼 것: %s (예약 %s, 시도 %s회, 컨테이너 %s) %s" % (
                 it["id"], it["publish_at"], it.get("attempts", 0), it.get("ig_container_id", "-"), it["video_url"]))

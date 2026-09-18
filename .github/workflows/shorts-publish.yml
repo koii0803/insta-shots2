@@ -19,6 +19,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - run: pip install -q pynacl
       - name: 토큰 검사·예약 확인·발행
         env:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
