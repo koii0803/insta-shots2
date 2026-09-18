@@ -332,6 +332,10 @@ def check_youtube():
     try:
         j, _ = yt_call("GET", YT_API + "channels?part=id,snippet&mine=true")
     except GraphError as e:
+        if "insufficient" in str(e).lower() or "scope" in str(e).lower():
+            YT_CHANNEL_TITLE = "명운보감"
+            print("유튜브 토큰 정상 (업로드 권한만 있어 채널 조회는 생략. 업로드 응답의 channelId 로 확인)")
+            return True
         log(LOG_ERR, "%s 유튜브 채널 조회 실패 (유튜브만 건너뜀): %s" % (stamp(), e))
         return False
     items = j.get("items") or []
@@ -396,6 +400,10 @@ def publish_yt(item, save):
     vid = j.get("id")
     if not vid:
         raise GraphError("유튜브 응답에 id 없음: %s" % j)
+    ch = (j.get("snippet") or {}).get("channelId")
+    if ch and ch != YT_CHANNEL_ID:
+        # 엉뚱한 채널에 올라감. 토큰이 잘못된 것 → 인증 오류로 취급해 나머지 중단. 올라간 영상은 사람이 지운다
+        raise GraphError("올라간 채널이 명운보감이 아님: %s (video %s). PC 에서 token.json 지우고 --auth-only → youtube_token.py" % (ch, vid), code=190)
     return vid, ("예약" if ahead else "공개")
 
 

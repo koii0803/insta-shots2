@@ -165,6 +165,12 @@ def main():
             else:
                 yt_state = "채널 불일치: %s" % [(i.get("id"), i.get("snippet", {}).get("title")) for i in items]
             print("유튜브: %s" % yt_state)
+        except urllib.error.HTTPError as e:
+            if e.code == 403 and at:
+                yt_state = "토큰 정상(업로드 권한만, 채널 조회 생략)"      # refresh 는 됐고 channels.list 만 권한 부족
+            else:
+                yt_state = "확인 실패(PC 에서 python youtube_token.py): HTTP %s" % e.code
+            print("유튜브: %s" % yt_state)
         except Exception as e:
             yt_state = "확인 실패(PC 에서 python youtube_token.py): %s" % str(e)[:120]
             print("유튜브 토큰 확인 실패(다른 건 계속): %s" % e)
