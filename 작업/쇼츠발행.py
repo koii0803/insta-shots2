@@ -1,25 +1,27 @@
 # -*- coding: utf-8 -*-
-"""깃허브 액션이 돌리는 인스타 릴스 발행 스크립트. 사용자가 직접 만질 일 없음.
+"""깃허브 액션이 돌리는 인스타 릴스 + 스레드 발행 스크립트. 사용자가 직접 만질 일 없음.
 이 저장소에는 영상이 없다(영상은 Cloudflare R2). 여기서는 예약표(쇼츠예약.json)만 본다.
 
-하는 일 (메타 그래프 API 직접 호출, Make 없음):
-  0) 토큰 검사: Secrets 비었거나 토큰이 죽었으면 아무것도 건드리지 않고 오류기록.txt 한 줄 + 종료코드 1 (액션 실패 → 깃허브가 이메일로 알림)
-  1) 쇼츠예약.json 에서 publish_at 이 지난 "대기" 건마다
-     - ig_container_id 가 이미 있으면 새로 만들지 않고 그 컨테이너 상태부터 본다
-     - 없으면 POST /{IG_USER_ID}/media (media_type=REELS, video_url, caption, share_to_feed) → 컨테이너 id 를 예약표에 바로 적는다
-     - 컨테이너 status_code 가 FINISHED 될 때까지 10초마다 최대 5분
-     - POST /{IG_USER_ID}/media_publish → ig_media_id, posted_at, status "게시"
-  2) 오류는 종류별로:
-     - 인증(190, 102, 10, 200~299): 대기 유지, 끝에 종료코드 1
+하는 일:
+  0) 금고(토큰.enc)를 Secrets 의 IG_ACCESS_TOKEN 으로 열어 60일 인스타 토큰·스레드 토큰을 꺼낸다. 토큰 검사.
+     인스타 토큰이 죽었으면 아무것도 건드리지 않고 오류기록.txt 한 줄 + 종료코드 1 (액션 실패 → 이메일).
+     스레드 토큰이 없거나 죽었으면 인스타만 하고 스레드는 건너뛴다(기록 남김).
+  1) 쇼츠예약.json 에서 publish_at 이 지난 건마다
+     - 인스타: status 가 "대기"면 POST /{IG_USER_ID}/media (REELS) → 컨테이너 FINISHED 까지 → media_publish → status "게시"
+     - 스레드: threads_status 가 "대기"면 POST /{THREADS_USER_ID}/threads (VIDEO, text) → FINISHED → threads_publish → threads_status "게시"
+     - 컨테이너 id 는 만들자마자 예약표에 적어 다음 회차에 이어서 본다.
+  2) 오류는 종류별로 (인스타·스레드 각각):
+     - 인증(190, 102, 10, 200~299): 대기 유지. 인스타면 액션 실패, 스레드면 기록만
      - 속도 제한(4, 17, 32, 613, 하루 한도 소진): 대기 유지, 다음 회차
      - 영상 규격(2207xxx, unsupported/aspect ratio/too short/too long, 컨테이너 ERROR): 즉시 "실패" (다시 해도 안 됨)
-     - 그 외(전송 실패, 시간 초과, 9007 등): attempts +1, 3회까지 대기 유지, 넘으면 "실패"
-     last_error 에 마지막 이유를 남긴다.
-영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(게시 20시간 뒤).
-게시 토큰 = 60일 사용자 토큰. 저장소의 금고(토큰.enc)에 암호화돼 있고, 열쇠는 Secrets IG_ACCESS_TOKEN(페이지 토큰). 갱신은 token-refresh 워크플로가 매주.
+     - 그 외(전송 실패, 시간 초과 등): attempts +1, 3회까지 대기 유지, 넘으면 "실패". last_error 에 마지막 이유.
+예약표 한 건: id, video_url, caption, publish_at, status(인스타), youtube_url + 액션이 쓰는 ig_container_id, ig_media_id, posted_at, attempts, last_error,
+             threads_text(없으면 caption 에서 만듦), threads_status, threads_container_id, threads_media_id, threads_posted_at, threads_attempts, threads_error
+영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(인스타 게시 20시간 뒤).
 로컬 시험: python 작업/쇼츠발행.py --dry-run  (토큰 없어도 됨. 아무것도 안 바꿈)
 """
 import os
+import re
 import sys
 import json
 import time
@@ -35,14 +37,16 @@ LOG_OK = ROOT / "발행기록.txt"
 LOG_ERR = ROOT / "오류기록.txt"
 IG_USER_ID = os.environ.get("IG_USER_ID", "").strip()
 VAULT_KEY = os.environ.get("IG_ACCESS_TOKEN", "").strip()   # 금고 열쇠(만료 없는 페이지 토큰). 게시에는 안 쓴다
-IG_TOKEN = ""                                                 # 게시용 60일 토큰. 금고(토큰.enc)에서 꺼낸다
-TOKEN_EXPIRES = 0
+IG_TOKEN = ""                                                 # 게시용 60일 인스타 토큰. 금고에서 꺼낸다
+TH_TOKEN, TH_USER_ID, TH_USERNAME = "", "", ""                # 스레드. 금고에 있으면 쓴다
 IG_USERNAME = "luck.arcade"           # 운빨연구소. 다른 계정이면 게시 전에 멈춘다
 GRAPH = "https://graph.facebook.com/v26.0/"
+THREADS = "https://graph.threads.net/v1.0/"
 KST = ZoneInfo("Asia/Seoul")
 DRY = "--dry-run" in sys.argv
 MAX_ATTEMPTS = 3
 POLL_SEC, POLL_MAX = 10, 30          # 10초 × 30 = 5분
+THREADS_TEXT_MAX = 500
 
 AUTH_CODES = {190, 102, 10} | set(range(200, 300))
 RATE_CODES = {4, 17, 32, 613}
@@ -56,30 +60,6 @@ except Exception:
 
 def now():
     return datetime.now(KST).replace(tzinfo=None)
-
-
-def open_vault():
-    """토큰.enc 를 열어 60일 토큰을 IG_TOKEN 에 넣는다. 실패면 이유 문자열."""
-    global IG_TOKEN, TOKEN_EXPIRES
-    if not VAULT_KEY:
-        return "IG_ACCESS_TOKEN(금고 열쇠) 비어 있음"
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import 금고
-    except ImportError:
-        return "pynacl 없음 (워크플로에 pip install pynacl)"
-    if not 금고.VAULT.exists():
-        # 금고가 아직 없으면 열쇠(페이지 토큰)로 그냥 게시한다. 발행이 끊기는 구간이 없게.
-        IG_TOKEN = VAULT_KEY
-        print("토큰.enc 없음 → 페이지 토큰으로 게시 (PC 에서 python ig_token.py 하면 60일 토큰으로 바뀜)")
-        return None
-    try:
-        v = 금고.load(VAULT_KEY)
-    except Exception as e:
-        return "금고를 못 열음(열쇠 태그 %s): %s" % (금고.key_tag(VAULT_KEY), type(e).__name__)
-    IG_TOKEN = v.get("user_token", "")
-    TOKEN_EXPIRES = v.get("expires_at") or 0
-    return None if IG_TOKEN else "금고 안에 토큰 없음"
 
 
 def stamp():
@@ -122,11 +102,10 @@ class GraphError(Exception):
         return ("[%s] " % tag if tag else "") + base
 
 
-def graph(method, path, **params):
-    """그래프 API 한 번. 성공이면 dict, 실패면 GraphError"""
-    params["access_token"] = IG_TOKEN
+def _call(base, token, method, path, **params):
+    params["access_token"] = token
     data = urllib.parse.urlencode(params).encode("utf-8")
-    url = GRAPH + path
+    url = base + path
     if method == "GET":
         url += "?" + data.decode("utf-8"); data = None
     req = urllib.request.Request(url, data, method=method)
@@ -145,9 +124,43 @@ def graph(method, path, **params):
         raise GraphError("전송 실패: %s" % e)
 
 
-# ── 0) 토큰 검사 ──────────────────────────────────────────────────────
+def graph(method, path, **params):
+    return _call(GRAPH, IG_TOKEN, method, path, **params)
+
+
+def threads(method, path, **params):
+    return _call(THREADS, TH_TOKEN, method, path, **params)
+
+
+# ── 0) 금고·토큰 검사 ─────────────────────────────────────────────────
+def open_vault():
+    """토큰.enc 를 열어 IG_TOKEN(+스레드)을 채운다. 실패면 이유 문자열."""
+    global IG_TOKEN, TH_TOKEN, TH_USER_ID, TH_USERNAME
+    if not VAULT_KEY:
+        return "IG_ACCESS_TOKEN(금고 열쇠) 비어 있음"
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import 금고
+    except ImportError:
+        return "pynacl 없음 (워크플로에 pip install pynacl)"
+    if not 금고.VAULT.exists():
+        # 금고가 아직 없으면 열쇠(페이지 토큰)로 인스타만 게시한다. 발행이 끊기는 구간이 없게.
+        IG_TOKEN = VAULT_KEY
+        print("토큰.enc 없음 → 페이지 토큰으로 인스타만 게시 (PC 에서 python ig_token.py 하면 60일 토큰으로 바뀜)")
+        return None
+    try:
+        v = 금고.load(VAULT_KEY)
+    except Exception as e:
+        return "금고를 못 열음(열쇠 태그 %s): %s" % (금고.key_tag(VAULT_KEY), type(e).__name__)
+    IG_TOKEN = v.get("user_token", "")
+    TH_TOKEN = v.get("threads_token", "")
+    TH_USER_ID = str(v.get("threads_user_id", "") or "")
+    TH_USERNAME = v.get("threads_username", "")
+    return None if IG_TOKEN else "금고 안에 인스타 토큰 없음"
+
+
 def check_token():
-    """토큰 값은 절대 출력하지 않는다. 문제면 이유 문자열, 정상이면 None"""
+    """인스타 토큰 검사. 값은 절대 출력하지 않는다. 문제면 이유 문자열, 정상이면 None"""
     if not IG_USER_ID:
         return "IG_USER_ID 비어 있음 (저장소 Settings → Secrets 에 등록)"
     err = open_vault()
@@ -158,7 +171,7 @@ def check_token():
     except GraphError as e:
         return "debug_token 실패: %s" % e
     info = {k: d.get(k) for k in ("type", "is_valid", "expires_at", "data_access_expires_at")}
-    print("토큰:", info, "scopes:", d.get("scopes"))
+    print("인스타 토큰:", info, "scopes:", d.get("scopes"))
     if not d.get("is_valid"):
         return "토큰이 유효하지 않음 (is_valid=false). token-refresh 실행 또는 PC 에서 ig_token.py"
     if d.get("expires_at"):
@@ -188,12 +201,31 @@ def check_token():
     return None
 
 
+def check_threads():
+    """스레드 토큰 검사. 쓸 수 있으면 True. 없거나 죽었으면 False (인스타는 계속)"""
+    global TH_USERNAME
+    if not TH_TOKEN or not TH_USER_ID:
+        print("스레드: 금고에 토큰 없음 → 건너뜀 (PC 에서 python threads_token.py)")
+        return False
+    try:
+        me = threads("GET", "me", fields="id,username")
+    except GraphError as e:
+        log(LOG_ERR, "%s 스레드 토큰 검사 실패 (스레드만 건너뜀): %s" % (stamp(), e))
+        return False
+    if str(me.get("id")) != TH_USER_ID:
+        log(LOG_ERR, "%s 스레드 계정 불일치: 금고 %s, 실제 %s (스레드만 건너뜀)" % (stamp(), TH_USER_ID, me))
+        return False
+    TH_USERNAME = me.get("username") or TH_USERNAME
+    print("스레드 계정: @%s (%s)" % (TH_USERNAME, TH_USER_ID))
+    return True
+
+
 def quota_left():
-    """하루 게시 한도. 조회 실패면 None (게시는 시도)"""
+    """인스타 하루 게시 한도. 조회 실패면 None (게시는 시도)"""
     try:
         d = graph("GET", IG_USER_ID + "/content_publishing_limit", fields="quota_usage,config").get("data", [{}])[0]
         used, total = d.get("quota_usage", 0), d.get("config", {}).get("quota_total", 0)
-        print("게시 한도: %s/%s (24시간)" % (used, total))
+        print("인스타 게시 한도: %s/%s (24시간)" % (used, total))
         return total - used if total else None
     except GraphError as e:
         print("게시 한도 조회 실패(무시): %s" % e)
@@ -201,25 +233,24 @@ def quota_left():
 
 
 # ── 1) 발행 ────────────────────────────────────────────────────────────
-def wait_container(cid):
+def wait_container(call, cid, fields):
     """FINISHED 면 None, 규격 오류면 GraphError(spec), 5분 넘으면 GraphError(other)"""
     st = {}
     for _ in range(POLL_MAX):
-        st = graph("GET", cid, fields="status_code,status")
-        code = st.get("status_code")
-        if code == "FINISHED":
+        st = call("GET", cid, fields=fields)
+        code = st.get("status_code") or st.get("status")
+        if code in ("FINISHED", "PUBLISHED"):
             return
         if code in ("ERROR", "EXPIRED"):
-            raise GraphError("컨테이너 %s: %s" % (code, st.get("status")), subcode=2207000)  # 규격 오류로 분류
+            raise GraphError("컨테이너 %s: %s" % (code, st.get("error_message") or st.get("status")), subcode=2207000)
         time.sleep(POLL_SEC)
-    raise GraphError("컨테이너 처리 %d분 초과 (status=%s)" % (POLL_SEC * POLL_MAX // 60, st.get("status_code")))
+    raise GraphError("컨테이너 처리 %d분 초과 (status=%s)" % (POLL_SEC * POLL_MAX // 60, code))
 
 
-def publish(item, save):
-    """한 건 게시. 성공이면 media_id. 실패면 GraphError. save() 는 컨테이너 id 를 만들자마자 예약표에 남기는 콜백"""
+def publish_ig(item, save):
     cid = item.get("ig_container_id")
     if cid:
-        print("  이어서: 컨테이너 %s 상태 확인" % cid)
+        print("  인스타 이어서: 컨테이너 %s" % cid)
     else:
         r = graph("POST", IG_USER_ID + "/media", media_type="REELS", video_url=item["video_url"],
                   caption=item.get("caption", ""), share_to_feed="true")
@@ -228,13 +259,77 @@ def publish(item, save):
             raise GraphError("컨테이너 id 없음: %s" % r)
         item["ig_container_id"] = cid
         save()
-        print("  컨테이너 %s 만듦" % cid)
-    wait_container(cid)
+        print("  인스타 컨테이너 %s 만듦" % cid)
+    wait_container(graph, cid, "status_code,status")
     pub = graph("POST", IG_USER_ID + "/media_publish", creation_id=cid)
     mid = pub.get("id")
     if not mid:
         raise GraphError("media_publish 응답에 id 없음: %s" % pub)
     return mid
+
+
+def th_state(it):
+    """스레드 상태. 표시가 없으면: 인스타가 아직 대기인 건은 '대기', 스레드 붙기 전에 이미 인스타 게시된 옛 건은 '없음'(안 올림)"""
+    return it.get("threads_status") or ("대기" if it.get("status", "대기") == "대기" else "없음")
+
+
+def threads_text(item):
+    """스레드 글: threads_text 가 있으면 그것, 없으면 캡션에서 해시태그 빼고 500자."""
+    t = item.get("threads_text")
+    if not t:
+        t = re.sub(r"\s*#\S+", "", item.get("caption", "")).strip()
+        t = re.sub(r"\n{3,}", "\n\n", t)
+    return t[:THREADS_TEXT_MAX]
+
+
+def publish_th(item, save):
+    cid = item.get("threads_container_id")
+    if cid:
+        print("  스레드 이어서: 컨테이너 %s" % cid)
+    else:
+        r = threads("POST", TH_USER_ID + "/threads", media_type="VIDEO", video_url=item["video_url"], text=threads_text(item))
+        cid = r.get("id")
+        if not cid:
+            raise GraphError("스레드 컨테이너 id 없음: %s" % r)
+        item["threads_container_id"] = cid
+        save()
+        print("  스레드 컨테이너 %s 만듦" % cid)
+        time.sleep(30)                     # 스레드는 30초 뒤부터 상태 확인 권장
+    wait_container(threads, cid, "status,error_message")
+    pub = threads("POST", TH_USER_ID + "/threads_publish", creation_id=cid)
+    mid = pub.get("id")
+    if not mid:
+        raise GraphError("threads_publish 응답에 id 없음: %s" % pub)
+    return mid
+
+
+def handle_error(it, e, tgt, save):
+    """오류 종류별 처리. tgt = 'ig' | 'th'. 인증 오류면 True(이 대상 나머지 건 중단)"""
+    if tgt == "ig":
+        name, st_key, err_key, att_key, cid_key = "인스타", "status", "last_error", "attempts", "ig_container_id"
+    else:
+        name, st_key, err_key, att_key, cid_key = "스레드", "threads_status", "threads_error", "threads_attempts", "threads_container_id"
+    it[err_key] = "%s %s" % (stamp(), e)
+    kind = e.kind
+    if kind == "auth":
+        log(LOG_ERR, "%s %s %s 인증 오류 (대기 유지): %s" % (stamp(), it["id"], name, e))
+        save()
+        return True
+    if kind == "rate":
+        log(LOG_ERR, "%s %s %s 속도 제한 (대기 유지, 다음 회차): %s" % (stamp(), it["id"], name, e))
+    elif kind == "spec":
+        it[st_key] = "실패"
+        it.pop(cid_key, None)
+        log(LOG_ERR, "%s %s %s 실패(영상 규격, 재시도 안 함): %s" % (stamp(), it["id"], name, e))
+    else:
+        it[att_key] = it.get(att_key, 0) + 1
+        if it[att_key] >= MAX_ATTEMPTS:
+            it[st_key] = "실패"
+            log(LOG_ERR, "%s %s %s 실패(%d회 시도): %s" % (stamp(), it["id"], name, it[att_key], e))
+        else:
+            log(LOG_ERR, "%s %s %s 보류(%d/%d회, 다음 회차 재시도): %s" % (stamp(), it["id"], name, it[att_key], MAX_ATTEMPTS, e))
+    save()
+    return False
 
 
 def main():
@@ -243,7 +338,7 @@ def main():
         return 0
     q = json.loads(QUEUE.read_text(encoding="utf-8"))
     t = now()
-    due = [it for it in q if it.get("status", "대기") == "대기" and parse(it["publish_at"]) <= t]
+    due_ig = [it for it in q if it.get("status", "대기") == "대기" and parse(it["publish_at"]) <= t]
 
     def save():
         if not DRY:
@@ -251,67 +346,73 @@ def main():
 
     if DRY:
         print("[dry-run] 아무것도 바꾸지 않음")
+        th_ok = False
         if VAULT_KEY:
             err = check_token()
             if err:
                 print("토큰 검사 실패:", err)
+            else:
+                th_ok = check_threads()
         else:
             print("[dry-run] 금고 열쇠 없음 → 토큰 검사 건너뜀")
-        for it in due:
-            print("  보낼 것: %s (예약 %s, 시도 %s회, 컨테이너 %s) %s" % (
-                it["id"], it["publish_at"], it.get("attempts", 0), it.get("ig_container_id", "-"), it["video_url"]))
-        if not due:
+        due_th = [it for it in q if th_state(it) == "대기" and parse(it["publish_at"]) <= t] if th_ok else []
+        for it in due_ig:
+            print("  인스타 보낼 것: %s (예약 %s, 시도 %s회, 컨테이너 %s)" % (it["id"], it["publish_at"], it.get("attempts", 0), it.get("ig_container_id", "-")))
+        for it in due_th:
+            print("  스레드 보낼 것: %s (%d자) %s" % (it["id"], len(threads_text(it)), threads_text(it)[:60].replace("\n", " ")))
+        if not due_ig and not due_th:
             print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
         return 0
 
     err = check_token()
     if err:
-        log(LOG_ERR, "%s 토큰 검사 실패: %s (대기 %d건 그대로 둠)" % (stamp(), err, len(due)))
+        log(LOG_ERR, "%s 토큰 검사 실패: %s (대기 %d건 그대로 둠)" % (stamp(), err, len(due_ig)))
         return 1
+    th_ok = check_threads()
+    due_th = [it for it in q if th_state(it) == "대기" and parse(it["publish_at"]) <= t] if th_ok else []
 
-    if not due:
+    if not due_ig and not due_th:
         print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
         return 0
 
-    left = quota_left()
     exit_code = 0
-    for it in due:
-        if left is not None and left <= 0:
-            log(LOG_ERR, "%s %s 보류: 24시간 게시 한도 소진. 다음 회차" % (stamp(), it["id"]))
-            continue
-        print("발행: %s (예약 %s)" % (it["id"], it["publish_at"]))
-        try:
-            mid = publish(it, save)
-        except GraphError as e:
-            kind = e.kind
-            it["last_error"] = "%s %s" % (stamp(), e)
-            if kind == "auth":
-                log(LOG_ERR, "%s %s 인증 오류 (대기 유지, 액션 실패): %s" % (stamp(), it["id"], e))
-                exit_code = 1
-                save()
-                break                              # 토큰이 죽었으면 나머지도 안 된다
-            if kind == "rate":
-                log(LOG_ERR, "%s %s 속도 제한 (대기 유지, 다음 회차): %s" % (stamp(), it["id"], e))
-            elif kind == "spec":
-                it["status"] = "실패"
-                it.pop("ig_container_id", None)
-                log(LOG_ERR, "%s %s 실패(영상 규격, 재시도 안 함): %s" % (stamp(), it["id"], e))
-            else:
-                it["attempts"] = it.get("attempts", 0) + 1
-                if it["attempts"] >= MAX_ATTEMPTS:
-                    it["status"] = "실패"
-                    log(LOG_ERR, "%s %s 실패(%d회 시도): %s" % (stamp(), it["id"], it["attempts"], e))
-                else:
-                    log(LOG_ERR, "%s %s 보류(%d/%d회, 다음 회차 재시도): %s" % (stamp(), it["id"], it["attempts"], MAX_ATTEMPTS, e))
+    # 인스타
+    if due_ig:
+        left = quota_left()
+        for it in due_ig:
+            if left is not None and left <= 0:
+                log(LOG_ERR, "%s %s 인스타 보류: 24시간 게시 한도 소진. 다음 회차" % (stamp(), it["id"]))
+                continue
+            print("인스타 발행: %s (예약 %s)" % (it["id"], it["publish_at"]))
+            try:
+                mid = publish_ig(it, save)
+            except GraphError as e:
+                if handle_error(it, e, "ig", save):
+                    exit_code = 1
+                    break                          # 토큰이 죽었으면 나머지도 안 된다
+                continue
+            it["status"] = "게시"
+            it["posted_at"] = stamp()
+            it["ig_media_id"] = mid
+            it.pop("last_error", None)
+            if left is not None:
+                left -= 1
+            log(LOG_OK, "%s %s 인스타 게시 (예약 %s) media %s %s" % (it["posted_at"], it["id"], it["publish_at"], mid, it["video_url"]))
             save()
+    # 스레드
+    for it in due_th:
+        print("스레드 발행: %s (예약 %s)" % (it["id"], it["publish_at"]))
+        try:
+            mid = publish_th(it, save)
+        except GraphError as e:
+            if handle_error(it, e, "th", save):
+                break
             continue
-        it["status"] = "게시"
-        it["posted_at"] = stamp()
-        it["ig_media_id"] = mid
-        it.pop("last_error", None)
-        if left is not None:
-            left -= 1
-        log(LOG_OK, "%s %s 게시 (예약 %s) media %s %s" % (it["posted_at"], it["id"], it["publish_at"], mid, it["video_url"]))
+        it["threads_status"] = "게시"
+        it["threads_posted_at"] = stamp()
+        it["threads_media_id"] = mid
+        it.pop("threads_error", None)
+        log(LOG_OK, "%s %s 스레드 게시 (예약 %s) post %s @%s" % (it["threads_posted_at"], it["id"], it["publish_at"], mid, TH_USERNAME))
         save()
     return exit_code
 

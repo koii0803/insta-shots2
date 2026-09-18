@@ -11,6 +11,7 @@
 import os
 import sys
 import json
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -56,6 +57,21 @@ def graph(path, **params):
         die("전송 실패 %s: %s" % (path, e))
 
 
+def threads_get(path, **params):
+    """스레드 API GET. 실패면 예외(호출 쪽에서 잡는다)"""
+    url = "https://graph.threads.net/" + path + "?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        try:
+            err = json.loads(body).get("error", {})
+            raise RuntimeError("code %s %s" % (err.get("code"), err.get("message")))
+        except ValueError:
+            raise RuntimeError("HTTP %s %s" % (e.code, body[:200]))
+
+
 def kst(ts):
     return datetime.fromtimestamp(ts, KST).strftime("%Y-%m-%d %H:%M") if ts else "없음"
 
@@ -94,11 +110,31 @@ def main():
     exp = d.get("expires_at") or 0
     print("새 60일 토큰: 만료 %s, data_access %s, @%s" % (kst(exp), kst(d.get("data_access_expires_at")), IG_USERNAME))
 
-    # 4) 금고 갱신 + 상태
+    # 4) 스레드 토큰 연장 (금고에 있을 때만. 실패해도 인스타 쪽은 저장한다)
+    th_state = "없음"
+    if v.get("threads_token"):
+        try:
+            tj = threads_get("refresh_access_token", grant_type="th_refresh_token", access_token=v["threads_token"])
+            if tj.get("access_token"):
+                v["threads_token"] = tj["access_token"]
+                v["threads_expires_at"] = int(time.time()) + int(tj.get("expires_in", 0))
+                me = threads_get("me", fields="id,username", access_token=v["threads_token"])
+                v["threads_username"] = me.get("username", v.get("threads_username"))
+                th_state = "@%s, 만료 %s" % (v["threads_username"], kst(v["threads_expires_at"]))
+                print("스레드 토큰 연장: %s" % th_state)
+            else:
+                th_state = "연장 실패: %s" % tj
+                print("스레드 토큰 연장 실패(인스타는 계속): %s" % tj)
+        except Exception as e:
+            th_state = "연장 실패: %s" % e
+            print("스레드 토큰 연장 실패(인스타는 계속): %s" % e)
+
+    # 5) 금고 갱신 + 상태
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
-    금고.save(KEY, {"app_secret": v["app_secret"], "user_token": new, "expires_at": exp, "updated": now})
+    v.update({"user_token": new, "expires_at": exp, "updated": now})
+    금고.save(KEY, v)
     STATE.write_text(json.dumps({"갱신": now, "만료": kst(exp), "data_access": kst(d.get("data_access_expires_at")),
-                                 "인스타": "@" + IG_USERNAME}, ensure_ascii=False, indent=1), encoding="utf-8")
+                                 "인스타": "@" + IG_USERNAME, "스레드": th_state}, ensure_ascii=False, indent=1), encoding="utf-8")
     print("금고·토큰상태.json 갱신. 끝.")
 
 
