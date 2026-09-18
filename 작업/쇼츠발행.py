@@ -1,16 +1,23 @@
 # -*- coding: utf-8 -*-
-"""깃허브 액션이 매시간 실행하는 인스타 릴스 발행 스크립트. 사용자가 직접 만질 일 없음.
+"""깃허브 액션이 돌리는 인스타 릴스 발행 스크립트. 사용자가 직접 만질 일 없음.
 이 저장소에는 영상이 없다(영상은 Cloudflare R2). 여기서는 예약표(쇼츠예약.json)만 본다.
 
-하는 일 (2026-09-18부터 Make 없이 메타 그래프 API 직접 호출):
-  쇼츠예약.json 에서 publish_at 이 지난 "대기" 건 →
-    1) POST /{IG_USER_ID}/media  (media_type=REELS, video_url, caption, share_to_feed)
-    2) 컨테이너 status_code 가 FINISHED 될 때까지 기다림 (최대 5분)
-    3) POST /{IG_USER_ID}/media_publish
-  → 성공이면 status "게시", posted_at, ig_media_id 기록 / 실패면 status "실패" + 오류기록.txt 한 줄 (다시 시도하지 않는다. 사람이 본다)
+하는 일 (메타 그래프 API 직접 호출, Make 없음):
+  0) 토큰 검사: Secrets 비었거나 토큰이 죽었으면 아무것도 건드리지 않고 오류기록.txt 한 줄 + 종료코드 1 (액션 실패 → 깃허브가 이메일로 알림)
+  1) 쇼츠예약.json 에서 publish_at 이 지난 "대기" 건마다
+     - ig_container_id 가 이미 있으면 새로 만들지 않고 그 컨테이너 상태부터 본다
+     - 없으면 POST /{IG_USER_ID}/media (media_type=REELS, video_url, caption, share_to_feed) → 컨테이너 id 를 예약표에 바로 적는다
+     - 컨테이너 status_code 가 FINISHED 될 때까지 10초마다 최대 5분
+     - POST /{IG_USER_ID}/media_publish → ig_media_id, posted_at, status "게시"
+  2) 오류는 종류별로:
+     - 인증(190, 102, 10, 200~299): 대기 유지, 끝에 종료코드 1
+     - 속도 제한(4, 17, 32, 613, 하루 한도 소진): 대기 유지, 다음 회차
+     - 영상 규격(2207xxx, unsupported/aspect ratio/too short/too long, 컨테이너 ERROR): 즉시 "실패" (다시 해도 안 됨)
+     - 그 외(전송 실패, 시간 초과, 9007 등): attempts +1, 3회까지 대기 유지, 넘으면 "실패"
+     last_error 에 마지막 이유를 남긴다.
 영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(게시 20시간 뒤).
-토큰은 저장소에 없고 깃허브 Secrets(IG_USER_ID, IG_ACCESS_TOKEN)로만 들어온다. 페이지 토큰이라 만료 없음.
-로컬 시험: python 작업/쇼츠발행.py --dry-run
+토큰은 저장소에 없고 깃허브 Secrets(IG_USER_ID, IG_ACCESS_TOKEN)로만 들어온다. 만료 없는 페이지 토큰.
+로컬 시험: python 작업/쇼츠발행.py --dry-run  (토큰 없어도 됨. 아무것도 안 바꿈)
 """
 import os
 import sys
@@ -28,9 +35,16 @@ LOG_OK = ROOT / "발행기록.txt"
 LOG_ERR = ROOT / "오류기록.txt"
 IG_USER_ID = os.environ.get("IG_USER_ID", "").strip()
 IG_TOKEN = os.environ.get("IG_ACCESS_TOKEN", "").strip()
-GRAPH = "https://graph.facebook.com/v21.0/"
+IG_USERNAME = "luck.arcade"           # 운빨연구소. 다른 계정이면 게시 전에 멈춘다
+GRAPH = "https://graph.facebook.com/v26.0/"
 KST = ZoneInfo("Asia/Seoul")
 DRY = "--dry-run" in sys.argv
+MAX_ATTEMPTS = 3
+POLL_SEC, POLL_MAX = 10, 30          # 10초 × 30 = 5분
+
+AUTH_CODES = {190, 102, 10} | set(range(200, 300))
+RATE_CODES = {4, 17, 32, 613}
+SPEC_WORDS = ("unsupported", "aspect ratio", "too short", "too long", "invalid video", "media download failed", "not supported")
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -40,6 +54,10 @@ except Exception:
 
 def now():
     return datetime.now(KST).replace(tzinfo=None)
+
+
+def stamp():
+    return now().strftime("%Y-%m-%d %H:%M")
 
 
 def parse(t):
@@ -53,8 +71,33 @@ def log(path, line):
             f.write(line + "\n")
 
 
+class GraphError(Exception):
+    """그래프 API 오류. kind = auth | rate | spec | other"""
+    def __init__(self, msg, code=None, subcode=None, http=None):
+        super().__init__(msg)
+        self.code, self.subcode, self.http = code, subcode, http
+
+    @property
+    def kind(self):
+        m = str(self).lower()
+        if self.code in AUTH_CODES:
+            return "auth"
+        if self.code in RATE_CODES:
+            return "rate"
+        if (self.subcode and 2207000 <= self.subcode < 2208000) or any(w in m for w in SPEC_WORDS):
+            return "spec"
+        return "other"
+
+    def __str__(self):
+        base = super().__str__()
+        tag = " ".join(x for x in ("code %s" % self.code if self.code is not None else "",
+                                   "sub %s" % self.subcode if self.subcode else "",
+                                   "HTTP %s" % self.http if self.http else "") if x)
+        return ("[%s] " % tag if tag else "") + base
+
+
 def graph(method, path, **params):
-    """그래프 API 한 번. 실패면 (None, 이유), 성공이면 (json, None)"""
+    """그래프 API 한 번. 성공이면 dict, 실패면 GraphError"""
     params["access_token"] = IG_TOKEN
     data = urllib.parse.urlencode(params).encode("utf-8")
     url = GRAPH + path
@@ -63,69 +106,183 @@ def graph(method, path, **params):
     req = urllib.request.Request(url, data, method=method)
     try:
         with urllib.request.urlopen(req, timeout=120) as r:
-            return json.load(r), None
+            return json.load(r)
     except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", "replace")[:300]
-        return None, "HTTP %s %s" % (e.code, body)
+        body = e.read().decode("utf-8", "replace")
+        try:
+            err = json.loads(body).get("error", {})
+        except Exception:
+            err = {}
+        raise GraphError(err.get("message") or body[:300], code=err.get("code"),
+                         subcode=err.get("error_subcode"), http=e.code)
     except Exception as e:
-        return None, "전송 실패: %s" % e
+        raise GraphError("전송 실패: %s" % e)
 
 
-def send(item):
-    """릴스 컨테이너 만들고 → 처리 끝날 때까지 기다리고 → 게시. 성공 (media_id, None), 실패 (None, 이유)"""
-    if DRY:
-        return "dry", None
+# ── 0) 토큰 검사 ──────────────────────────────────────────────────────
+def check_token():
+    """토큰 값은 절대 출력하지 않는다. 문제면 이유 문자열, 정상이면 None"""
     if not IG_USER_ID or not IG_TOKEN:
-        return None, "IG_USER_ID / IG_ACCESS_TOKEN 비어 있음 (저장소 Settings → Secrets 에 등록)"
-    r, err = graph("POST", IG_USER_ID + "/media", media_type="REELS", video_url=item["video_url"],
-                   caption=item.get("caption", ""), share_to_feed="true")
-    if err:
-        return None, "컨테이너 " + err
-    cid = r.get("id")
-    if not cid:
-        return None, "컨테이너 id 없음: %s" % r
-    for _ in range(30):  # 최대 5분
-        time.sleep(10)
-        st, err = graph("GET", cid, fields="status_code,status")
-        if err:
-            return None, "상태 확인 " + err
+        return "IG_USER_ID / IG_ACCESS_TOKEN 비어 있음 (저장소 Settings → Secrets 에 등록)"
+    try:
+        d = graph("GET", "debug_token", input_token=IG_TOKEN).get("data", {})
+    except GraphError as e:
+        return "debug_token 실패: %s" % e
+    info = {k: d.get(k) for k in ("type", "is_valid", "expires_at", "data_access_expires_at")}
+    print("토큰:", info, "scopes:", d.get("scopes"))
+    if not d.get("is_valid"):
+        return "토큰이 유효하지 않음 (is_valid=false). PC에서 ig_token.py 로 다시 만들 것"
+    if d.get("expires_at"):
+        exp = datetime.fromtimestamp(d["expires_at"], KST).replace(tzinfo=None)
+        print("주의: 만료 있는 토큰 (%s 까지). 페이지 토큰(만료 없음)으로 바꿀 것" % exp.strftime("%Y-%m-%d %H:%M"))
+        if exp <= now():
+            return "토큰 만료됨 (%s)" % exp.strftime("%Y-%m-%d %H:%M")
+    dae = d.get("data_access_expires_at")
+    if dae:
+        left = (datetime.fromtimestamp(dae, KST).replace(tzinfo=None) - now()).days
+        if left <= 10:
+            print("주의: data_access_expires_at 까지 %d일. 게시가 막히면 ig_token.py 로 토큰 재발급" % left)
+    need = {"instagram_basic", "instagram_content_publish"}
+    missing = need - set(d.get("scopes") or [])
+    if missing:
+        return "토큰 권한 부족: %s" % ", ".join(sorted(missing))
+    try:
+        u = graph("GET", IG_USER_ID, fields="username")
+    except GraphError as e:
+        return "인스타 계정 조회 실패: %s" % e
+    if u.get("username") != IG_USERNAME:
+        return "IG_USER_ID 가 @%s 가 아님: %s" % (IG_USERNAME, u)
+    print("인스타 계정: @%s (%s)" % (u.get("username"), IG_USER_ID))
+    return None
+
+
+def quota_left():
+    """하루 게시 한도. 조회 실패면 None (게시는 시도)"""
+    try:
+        d = graph("GET", IG_USER_ID + "/content_publishing_limit", fields="quota_usage,config").get("data", [{}])[0]
+        used, total = d.get("quota_usage", 0), d.get("config", {}).get("quota_total", 0)
+        print("게시 한도: %s/%s (24시간)" % (used, total))
+        return total - used if total else None
+    except GraphError as e:
+        print("게시 한도 조회 실패(무시): %s" % e)
+        return None
+
+
+# ── 1) 발행 ────────────────────────────────────────────────────────────
+def wait_container(cid):
+    """FINISHED 면 None, 규격 오류면 GraphError(spec), 5분 넘으면 GraphError(other)"""
+    st = {}
+    for _ in range(POLL_MAX):
+        st = graph("GET", cid, fields="status_code,status")
         code = st.get("status_code")
         if code == "FINISHED":
-            break
+            return
         if code in ("ERROR", "EXPIRED"):
-            return None, "컨테이너 %s: %s" % (code, st.get("status"))
+            raise GraphError("컨테이너 %s: %s" % (code, st.get("status")), subcode=2207000)  # 규격 오류로 분류
+        time.sleep(POLL_SEC)
+    raise GraphError("컨테이너 처리 %d분 초과 (status=%s)" % (POLL_SEC * POLL_MAX // 60, st.get("status_code")))
+
+
+def publish(item, save):
+    """한 건 게시. 성공이면 media_id. 실패면 GraphError. save() 는 컨테이너 id 를 만들자마자 예약표에 남기는 콜백"""
+    cid = item.get("ig_container_id")
+    if cid:
+        print("  이어서: 컨테이너 %s 상태 확인" % cid)
     else:
-        return None, "컨테이너 처리 5분 초과 (status=%s)" % st.get("status_code")
-    pub, err = graph("POST", IG_USER_ID + "/media_publish", creation_id=cid)
-    if err:
-        return None, "게시 " + err
-    return pub.get("id"), None
+        r = graph("POST", IG_USER_ID + "/media", media_type="REELS", video_url=item["video_url"],
+                  caption=item.get("caption", ""), share_to_feed="true")
+        cid = r.get("id")
+        if not cid:
+            raise GraphError("컨테이너 id 없음: %s" % r)
+        item["ig_container_id"] = cid
+        save()
+        print("  컨테이너 %s 만듦" % cid)
+    wait_container(cid)
+    pub = graph("POST", IG_USER_ID + "/media_publish", creation_id=cid)
+    mid = pub.get("id")
+    if not mid:
+        raise GraphError("media_publish 응답에 id 없음: %s" % pub)
+    return mid
 
 
 def main():
     if not QUEUE.exists():
         print("예약표 없음")
-        return
+        return 0
     q = json.loads(QUEUE.read_text(encoding="utf-8"))
     t = now()
-    changed = False
-    for it in q:
-        if it.get("status", "대기") == "대기" and parse(it["publish_at"]) <= t:
-            media_id, err = send(it)
+    due = [it for it in q if it.get("status", "대기") == "대기" and parse(it["publish_at"]) <= t]
+
+    def save():
+        if not DRY:
+            QUEUE.write_text(json.dumps(q, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    if DRY:
+        print("[dry-run] 아무것도 바꾸지 않음")
+        if IG_TOKEN:
+            err = check_token()
             if err:
-                it["status"] = "실패"
-                log(LOG_ERR, "%s %s 실패: %s" % (t.strftime("%Y-%m-%d %H:%M"), it["id"], err))
-            else:
-                it["status"] = "게시"
-                it["posted_at"] = t.strftime("%Y-%m-%d %H:%M")
-                it["ig_media_id"] = media_id
-                log(LOG_OK, "%s %s 게시 전송 (예약 %s) %s" % (it["posted_at"], it["id"], it["publish_at"], it["video_url"]))
-            changed = True
-    if changed and not DRY:
-        QUEUE.write_text(json.dumps(q, ensure_ascii=False, indent=1), encoding="utf-8")
-    if not changed:
+                print("토큰 검사 실패:", err)
+        else:
+            print("[dry-run] 토큰 없음 → 토큰 검사 건너뜀")
+        for it in due:
+            print("  보낼 것: %s (예약 %s, 시도 %s회, 컨테이너 %s) %s" % (
+                it["id"], it["publish_at"], it.get("attempts", 0), it.get("ig_container_id", "-"), it["video_url"]))
+        if not due:
+            print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
+        return 0
+
+    err = check_token()
+    if err:
+        log(LOG_ERR, "%s 토큰 검사 실패: %s (대기 %d건 그대로 둠)" % (stamp(), err, len(due)))
+        return 1
+
+    if not due:
         print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
+        return 0
+
+    left = quota_left()
+    exit_code = 0
+    for it in due:
+        if left is not None and left <= 0:
+            log(LOG_ERR, "%s %s 보류: 24시간 게시 한도 소진. 다음 회차" % (stamp(), it["id"]))
+            continue
+        print("발행: %s (예약 %s)" % (it["id"], it["publish_at"]))
+        try:
+            mid = publish(it, save)
+        except GraphError as e:
+            kind = e.kind
+            it["last_error"] = "%s %s" % (stamp(), e)
+            if kind == "auth":
+                log(LOG_ERR, "%s %s 인증 오류 (대기 유지, 액션 실패): %s" % (stamp(), it["id"], e))
+                exit_code = 1
+                save()
+                break                              # 토큰이 죽었으면 나머지도 안 된다
+            if kind == "rate":
+                log(LOG_ERR, "%s %s 속도 제한 (대기 유지, 다음 회차): %s" % (stamp(), it["id"], e))
+            elif kind == "spec":
+                it["status"] = "실패"
+                it.pop("ig_container_id", None)
+                log(LOG_ERR, "%s %s 실패(영상 규격, 재시도 안 함): %s" % (stamp(), it["id"], e))
+            else:
+                it["attempts"] = it.get("attempts", 0) + 1
+                if it["attempts"] >= MAX_ATTEMPTS:
+                    it["status"] = "실패"
+                    log(LOG_ERR, "%s %s 실패(%d회 시도): %s" % (stamp(), it["id"], it["attempts"], e))
+                else:
+                    log(LOG_ERR, "%s %s 보류(%d/%d회, 다음 회차 재시도): %s" % (stamp(), it["id"], it["attempts"], MAX_ATTEMPTS, e))
+            save()
+            continue
+        it["status"] = "게시"
+        it["posted_at"] = stamp()
+        it["ig_media_id"] = mid
+        it.pop("last_error", None)
+        if left is not None:
+            left -= 1
+        log(LOG_OK, "%s %s 게시 (예약 %s) media %s %s" % (it["posted_at"], it["id"], it["publish_at"], mid, it["video_url"]))
+        save()
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
