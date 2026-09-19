@@ -442,7 +442,7 @@ def publish_ig(item, save):
         print("  인스타 이어서: 컨테이너 %s" % cid)
     else:
         r = graph("POST", IG_USER_ID + "/media", media_type="REELS", video_url=item["video_url"],
-                  caption=item.get("caption", ""), share_to_feed="true")
+                  caption=item.get("caption", ""), share_to_feed="false")   # 릴스 탭에만, 피드에 안 띄움 (2026-09-19 사장님 지시)
         cid = r.get("id")
         if not cid:
             raise GraphError("컨테이너 id 없음: %s" % r)
