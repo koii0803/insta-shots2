@@ -8,7 +8,7 @@
        (PC 가 꺼져 쇼츠가 없으면 띠 글 2개를 여기서 만든다 → 스레드는 하루도 안 빈다)
      - 일상·사람: 오늘 같은 종류가 이미 있으면 안 만든다.
   3) 띠 글 = 스레드글.generate() + auto_hide()(가림 기준 표 그대로: 항목 줄 + 시점 앞부분).
-     일상 글 = 제미나이(GEMINI_API_KEY)에 스킬 '일상 글' 절 규칙으로 부탁 → 스레드글.check() 통과할 때까지 3번.
+     일진 글 = 일진글.py(오늘 달력, 규칙만, 제미나이 없음) — 일상 자리 중 첫 번째. 나머지 일상 글 = 제미나이(GEMINI_API_KEY)에 스킬 '일상 글' 절 규칙으로 부탁 → 스레드글.check() 통과할 때까지 3번.
      사람 글 = 실제 있었던 일만 → 스레드소재.txt 에 사장님(또는 PC AI)이 적어 둔 줄 하나를 써서 제미나이에 부탁. 소재 없으면 그 자리는 비운다(안 지어냄).
   4) 예약표에 threads-<종류>-<시각> 건으로 넣고(threads_status 대기), 스레드글기록.jsonl 에 기록. 발행은 shorts-publish 가 30분마다.
   5) 스레드하루치기록.json 에 오늘 날짜를 적어 같은 날 두 번 안 돈다(수동 실행해도).
@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import 스레드글
+import 일진글          # 일상 자리 하나는 오늘 일진 글 (2026-09-19 사장님 지시)
 
 ROOT = Path(__file__).resolve().parent.parent
 QUEUE = ROOT / "쇼츠예약.json"
@@ -163,13 +164,18 @@ def main():
         return 0
     q = json.loads(QUEUE.read_text(encoding="utf-8")) if QUEUE.exists() else []
     today = [it for it in q if it.get("publish_at", "").startswith(day) and (it.get("threads_text") or it.get("threads_status"))]
-    have = {"띠": 0, "일상": 0, "사람": 0}
+    have = {"띠": 0, "일상": 0, "사람": 0, "일진": 0}
     for it in today:
         k = it.get("threads_kind") or "띠"
         have[k] = have.get(k, 0) + 1
     rec = 스레드글.load_record()
     last_person = max((r["날짜"][:10] for r in rec if r.get("종류") == "사람"), default=None)
     plan = 스레드글.plan_today(day=day, rng=random.Random(), last_person=last_person)
+    for slot in plan:                                   # 일상 자리 중 첫 번째는 일진 글(오늘 달력 한마디). 나머지 일상은 그대로
+        if slot["kind"] == "일상":
+            slot["kind"] = "일진"
+            break
+    recent_keys = [r.get("훅") for r in rec[-20:] if r.get("종류") == "일진"]
     print("계획 %d개: %s / 이미 있음 %s" % (len(plan), ", ".join("%s %s" % (x["at"][11:], x["kind"]) for x in plan), have))
     if not GEMINI_KEY:
         print("GEMINI_API_KEY 없음 → 일상·사람 글은 건너뜀 (저장소 Settings → Secrets 에 등록)")
@@ -191,6 +197,12 @@ def main():
                 log_err("%s 스레드 하루치: 띠 글 생성 실패 %s" % (stamp(), e))
                 continue
             text, ents, animal, hook = g["text"], 스레드글.auto_hide(g["text"]), g["animal"], g["hook"]
+        elif kind == "일진":
+            try:
+                g = 일진글.generate(day, random.Random(), avoid_keys=recent_keys)
+            except RuntimeError as e:
+                log_err("%s 스레드 하루치: 일진 글 생성 실패 %s" % (stamp(), e)); continue
+            text, ents, animal, hook = g["text"], [], g["animal"], g["key"]
         elif kind == "일상":
             if not GEMINI_KEY:
                 skipped.append("%s 일상(키 없음)" % at[11:]); continue
