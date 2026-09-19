@@ -161,7 +161,11 @@
     "length": 9
    }
   ],
-  "threads_status": "대기"
+  "threads_status": "게시",
+  "threads_container_id": "17909399433541214",
+  "threads_posted_at": "2026-09-19 13:53",
+  "threads_media_id": "18101935433373903",
+  "threads_reply_id": "18068890373775101"
  },
  {
   "id": "threads-띠-20260919-2325",
@@ -212,7 +216,11 @@
   "threads_kind": "일상",
   "threads_text": "토요일 낮인데 평일이랑 똑같이 모니터 앞에 앉아있네.\n회사 안 가도 매일 사주 코드 들여다보니까 요일 감각이 사라지는 것 같다.\n다들 주말 점심 메뉴 뭐 먹고 있어?",
   "threads_entities": [],
-  "threads_status": "대기"
+  "threads_status": "게시",
+  "threads_container_id": "17909399460541214",
+  "threads_posted_at": "2026-09-19 13:54",
+  "threads_media_id": "18003527468793857",
+  "threads_reply_id": "17881094202688097"
  },
  {
   "id": "threads-일상-20260920-1833",
