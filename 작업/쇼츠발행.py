@@ -39,7 +39,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -69,6 +69,8 @@ MAX_ATTEMPTS = 3
 POLL_SEC, POLL_MAX = 10, 30          # 10초 × 30 = 5분
 THREADS_TEXT_MAX = 500
 THREADS_REPLY = "사람이 봐주는 데 아님. 사주 달력표 그대로 뽑아주는 곳. 네 년생 30초, 링크 ↓" + "\n" + "https://sajuarcade.com"   # = PC config.THREADS_REPLY
+REPLY_EVERY_DAYS = 5                                  # 링크 답글은 5일에 1회 (2026-09-19 사장님 지시 "웹사이트 댓글 5일에 1회"). 나머지 글은 본문만
+REPLY_LOG = ROOT / "스레드링크기록.json"               # {"last": "YYYY-MM-DD HH:MM"} 마지막으로 링크 답글 단 시각
 
 AUTH_CODES = {190, 102, 10} | set(range(200, 300))
 RATE_CODES = {4, 17, 32, 613}
@@ -493,6 +495,24 @@ def publish_th(item, save):
     return mid
 
 
+def reply_due():
+    """마지막 링크 답글 뒤 REPLY_EVERY_DAYS 일이 지났나. 기록 없으면 True."""
+    try:
+        last = json.loads(REPLY_LOG.read_text(encoding="utf-8")).get("last")
+        if last:
+            dt = datetime.strptime(last, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+            return datetime.now(KST) - dt >= timedelta(days=REPLY_EVERY_DAYS)
+    except Exception:
+        pass
+    return True
+
+
+def mark_reply():
+    if DRY:
+        return
+    REPLY_LOG.write_text(json.dumps({"last": stamp()}, ensure_ascii=False), encoding="utf-8")
+
+
 def reply_th(item, mid):
     """게시 뒤 첫 답글에 만세력 문장 + 사이트 링크 (본문 링크 금지라 답글로). 실패해도 본문 게시는 유효 → 기록만."""
     try:
@@ -507,6 +527,7 @@ def reply_th(item, mid):
         if not rid:
             raise GraphError("답글 threads_publish 응답에 id 없음: %s" % pub)
         item["threads_reply_id"] = rid
+        mark_reply()
         print("  스레드 첫 답글(링크) %s" % rid)
     except GraphError as e:
         item["threads_reply_error"] = "%s %s" % (stamp(), e)
@@ -723,8 +744,11 @@ def main():
         it.pop("threads_error", None)
         log(LOG_OK, "%s %s 스레드 게시 (예약 %s) post %s @%s" % (it["threads_posted_at"], it["id"], it["publish_at"], mid, TH_USERNAME))
         save()
-        reply_th(it, mid)
-        save()
+        if reply_due():
+            reply_th(it, mid)
+            save()
+        else:
+            print("  링크 답글 건너뜀 (최근 %d일 안에 달았음)" % REPLY_EVERY_DAYS)
     # 페북 페이지 릴스
     for it in due_fb:
         print("페북 발행: %s (예약 %s)" % (it["id"], it["publish_at"]))
