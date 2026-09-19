@@ -387,5 +387,17 @@
   "fb_status": "대기",
   "youtube_video_id": "Gs8vpWoHMCQ",
   "youtube_uploaded_at": "2026-09-19 04:50"
+ },
+ {
+  "id": "threads-일진-20260920-1214",
+  "video_url": "",
+  "caption": "",
+  "publish_at": "2026-09-20 12:14",
+  "status": "없음",
+  "youtube_url": "",
+  "threads_kind": "일진",
+  "threads_text": "아침부터 뭐 하나 꼬여서 달력 봤더니 오늘 닭 날이더라\n토끼띠는 오늘 그냥 조용히 보내. 나도 집에서 코드나 만졌어\n너희는 오늘 어땠어?",
+  "threads_entities": [],
+  "threads_status": "대기"
  }
 ]
