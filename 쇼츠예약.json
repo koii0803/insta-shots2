@@ -42,7 +42,7 @@
   "status": "게시",
   "youtube_url": "https://youtube.com/shorts/NytKv8fluX8",
   "threads_text": "나 오늘 양띠 하나만 짚고 갈게\n🐑 양띠(1979 / 1991 / 2003)\n혼자보다 누군가와 있을 때 힘이 나는 기질이야\n올해 흐름이 양띠 쪽으로 붙는 해야. 막혀 있던 문이 하나씩 열리는 구조\n막혀 있던 <수입 흐름 · 사업 · 공부> 쪽이\n순서대로 풀리기 시작하고\n막혔던 자리에 귀인이 나타나\n올해는 유난히\n<사업 확장 · 공부 흐름 · 이사·환경 변화 · 새 인연> 강하다\n지금부터 12월까지가 판 짜는 구간이야\n희망고문 안 해\n양띠 네 년생만 넣어. 30초, 링크는 아래 답글\n너, 기다린 만큼 한꺼번에 온다.\n복채는 스하리로 받을게",
-  "threads_status": "대기",
+  "threads_status": "게시",
   "threads_entities": [
    {
     "entity_type": "SPOILER",
@@ -61,11 +61,12 @@
   "posted_at": "2026-09-21 01:55",
   "ig_media_id": "17910703809525993",
   "threads_container_id": "17909674212541214",
-  "threads_error": "2026-09-21 01:55 [code 24 sub 4279009 HTTP 400] The requested resource does not exist",
   "threads_attempts": 1,
   "fb_video_id": "1769256824279441",
   "fb_posted_at": "2026-09-21 01:56",
-  "fb_post_id": "122112624621457269"
+  "fb_post_id": "122112624621457269",
+  "threads_posted_at": "2026-09-21 04:13",
+  "threads_media_id": "18052049237803703"
  },
  {
   "id": "grid-시월인연",
