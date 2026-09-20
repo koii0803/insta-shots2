@@ -244,7 +244,10 @@
   "threads_kind": "일상",
   "threads_text": "일요일 저녁인데 나는 여전히 방구석에서 사주 사이트 코드랑 씨름 중이다.\n내일 출근 안 하니까 월요병은 없는데, 주말 끝나는 건 왜 똑같이 아쉬울까.\n다들 주말 마무리 잘하고 있어?",
   "threads_entities": [],
-  "threads_status": "대기"
+  "threads_status": "게시",
+  "threads_container_id": "17909637225541214",
+  "threads_posted_at": "2026-09-20 22:09",
+  "threads_media_id": "18104715929613695"
  },
  {
   "id": "grid-연말마무리",
