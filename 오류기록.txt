@@ -1,3 +1,4 @@
 2026-09-18 19:33 threads-고정글 스레드 답글(링크) 실패 (본문은 게시됨): [code 1 HTTP 500] An unknown error occurred
 2026-09-18 19:36 threads-고정글 스레드 답글(링크) 실패 (본문은 게시됨): [code 1 HTTP 500] An unknown error occurred
 2026-09-19 01:30 스레드 하루치: 일상 글 못 만듦(2026-09-20 21:59)
+2026-09-21 01:55 grid-2027-승진자격 스레드 보류(1/3회, 다음 회차 재시도): [code 24 sub 4279009 HTTP 400] The requested resource does not exist
