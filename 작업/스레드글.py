@@ -340,13 +340,15 @@ def selftest(n):
 
 
 # ── 하루 계획 (00시 넘어 첫 AI 가 부른다. 개수·시각·자리 종류를 기계가 정한다) ─────────────
-PLAN_MIN, PLAN_MAX = 3, 5
-SLOT_WINDOWS = {"아침": (7, 40, 8, 40), "낮": (11, 40, 13, 30), "저녁": (17, 30, 18, 40), "밤": (21, 0, 23, 30)}   # (시,분,시,분)
+PLAN_MIN, PLAN_MAX = 4, 6     # 2026-09-22 사장님 지시 "최소 4~6개, 시간은 올랜덤" (전엔 3~5)
+# 시간대 6개 (사장님이 정한 4개를 살짝 넓히고 오전·오후 2개 추가). 한 자리엔 글 하나. 자리 안에서 분은 완전 랜덤.
+SLOT_WINDOWS = {"아침": (7, 30, 8, 50), "오전": (10, 0, 11, 20), "낮": (11, 40, 13, 30),
+                "오후": (15, 0, 16, 20), "저녁": (17, 30, 18, 50), "밤": (21, 0, 23, 30)}   # (시,분,시,분)
 PERSON_EVERY_DAYS = 3        # 사람 글은 3~4일에 한 번
 
 
 def plan_today(day=None, rng=None, last_person=None):
-    """오늘 글 자리 3~5개. 띠 글 2개(쇼츠와 같은 낮·밤)는 고정, 나머지는 일상글, 3~4일에 한 번 사람 글(밤).
+    """오늘 글 자리 4~6개(2026-09-22). 띠 글 2개(쇼츠와 같은 낮·밤)는 고정, 나머지는 일상글, 3~4일에 한 번 사람 글(저녁).
     돌려주는 것: [{"kind": "띠|일상|사람", "at": "YYYY-MM-DD HH:MM"}, ...] 시각순. 서로 1시간 이상 띄운다.
     last_person = 마지막 사람 글 날짜(str) 또는 None."""
     from datetime import datetime, timedelta
@@ -365,12 +367,12 @@ def plan_today(day=None, rng=None, last_person=None):
     person_due = True
     if last_person:
         person_due = (d0 - datetime.strptime(last_person, "%Y-%m-%d")).days >= rng.choice([PERSON_EVERY_DAYS, PERSON_EVERY_DAYS + 1])
-    extra = ["아침", "저녁", "낮", "밤"]
+    extra = ["아침", "오전", "오후", "저녁"]        # 띠 글이 낮·밤을 쓰니 나머지 4자리에서 랜덤으로 고른다
     rng.shuffle(extra)
     for win in extra:
         if len(slots) >= n:
             break
-        kind = "사람" if (person_due and win == "밤" and not any(k == "사람" for k, _ in slots)) else "일상"
+        kind = "사람" if (person_due and win == "저녁" and not any(k == "사람" for k, _ in slots)) else "일상"   # 사람 글은 저녁(밤은 띠 글)
         slots.append((kind, pick(win)))
     # 일상 자리는 **반드시 하나 이상**. 개수가 3개로 뽑히고 사람 글이 걸린 날은
     # 띠2 + 사람1 이 돼서 일상이 0이 됐다(300번 중 27번 = 9%). 그러면 일진 글까지 같이 사라진다
