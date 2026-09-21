@@ -66,6 +66,52 @@ THREADS = "https://graph.threads.net/v1.0/"
 KST = ZoneInfo("Asia/Seoul")
 DRY = "--dry-run" in sys.argv
 MAX_ATTEMPTS = 3
+
+# ── 몰아서 안 올리기 (2026-09-22 사장님 지시 "밀린 게 2개 이상일 때 한꺼번에 올라가면 SNS 가 싫어한다") ──
+# 깨우기(PC·워커 10분마다)가 있어 밀릴 일이 거의 없지만, 둘 다 죽었다 살아났을 때의 안전장치.
+MIN_GAP_MIN = {"ig": 180, "fb": 180, "yt": 180, "th": 45}   # 같은 SNS 에 마지막 게시 후 이만큼(분) 안 지났으면 다음 회차로.
+                                                             # 스레드는 하루 3~5개를 1시간 간격으로 올리는 계획이라 짧게.
+MAX_LATE_H = 24            # 이만큼 넘게 밀린 건 안 올리고 '보류'로 두고 사장님께 묻는다 (새벽 3시에 어제 것이 올라가는 사고 방지)
+POSTED_KEY = {"ig": "posted_at", "th": "threads_posted_at", "fb": "fb_posted_at", "yt": "youtube_uploaded_at"}
+STATUS_KEY = {"ig": "status", "th": "threads_status", "fb": "fb_status", "yt": "youtube_status"}
+NAME = {"ig": "인스타", "th": "스레드", "fb": "페북", "yt": "유튜브"}
+
+
+def tg_send(text):
+    """텔레그램 알림 (Secrets TELEGRAM_BOT_TOKEN·TELEGRAM_CHAT_ID). 없으면 조용히 건너뜀."""
+    tok, chat = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(), os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not tok or not chat or DRY:
+        return
+    try:
+        body = urllib.parse.urlencode({"chat_id": chat, "text": text[:4000]}).encode("utf-8")
+        urllib.request.urlopen("https://api.telegram.org/bot%s/sendMessage" % tok, body, timeout=30).read()
+    except Exception as e:
+        print("텔레그램 실패: %s" % e)
+
+
+def spread(q, t, due, tgt, save):
+    """한 회차에 SNS 마다 1개만, 마지막 게시 후 MIN_GAP_MIN 지나야, 하루 넘게 밀린 건 보류. 올릴 목록을 돌려준다."""
+    if not due:
+        return due
+    name, st_key, posted_key = NAME[tgt], STATUS_KEY[tgt], POSTED_KEY[tgt]
+    due = sorted(due, key=lambda it: it["publish_at"])
+    fresh = []
+    for it in due:
+        if t - parse(it["publish_at"]) > timedelta(hours=MAX_LATE_H):
+            it[st_key] = "보류"
+            log(LOG_ERR, "%s %s %s 보류: 예약(%s)이 하루 넘게 지남. 올리려면 %s 를 '대기'로" % (stamp(), it["id"], name, it["publish_at"], st_key))
+            tg_send("⏸ %s 보류 — 예약 %s 이 하루 넘게 밀렸어.\n%s\n\n올릴 거면 말해줘 (지금은 안 올림)" % (name, it["publish_at"], it["id"]))
+            save()
+        else:
+            fresh.append(it)
+    last = [parse(it[posted_key]) for it in q if it.get(posted_key)]
+    if last and (t - max(last)) < timedelta(minutes=MIN_GAP_MIN[tgt]):
+        if fresh:
+            print("  %s: 마지막 게시 %s 로부터 %d분 안 지나 이번 회차는 쉼 (%d건 대기)" % (name, max(last).strftime("%H:%M"), MIN_GAP_MIN[tgt], len(fresh)))
+        return []
+    if len(fresh) > 1:
+        print("  %s: %d건 밀림 → 이번 회차엔 1개만, 나머지는 %d분 뒤부터" % (name, len(fresh), MIN_GAP_MIN[tgt]))
+    return fresh[:1]
 POLL_SEC, POLL_MAX = 10, 30          # 10초 × 30 = 5분
 THREADS_TEXT_MAX = 500
 THREADS_REPLY = "사람이 봐주는 데 아님. 사주 달력표 그대로 뽑아주는 곳. 네 년생 30초, 링크 ↓" + "\n" + "https://sajuarcade.com"   # = PC config.THREADS_REPLY
@@ -659,7 +705,7 @@ def main():
         fb_ok = check_fb() if VAULT_KEY and IG_SCOPES else False
         due_fb = [it for it in q if fb_state(it) == "대기" and parse(it["publish_at"]) <= t] if fb_ok else []
         yt_ok = check_youtube() if VAULT_KEY and IG_TOKEN else False
-        due_yt = [it for it in q if yt_state(it) == "대기"] if yt_ok else []
+        due_yt = [it for it in q if yt_state(it) == "대기" and parse(it["publish_at"]) <= t] if yt_ok else []
         for it in due_yt:
             print("  유튜브 올릴 것: %s (예약 %s, 시도 %s회) %s" % (it["id"], it["publish_at"], it.get("youtube_attempts", 0), (it.get("yt_title") or "")[:40]))
         for it in due_ig:
@@ -684,6 +730,9 @@ def main():
     # 2026-09-22 사장님 지시: 유튜브도 예약 공개 대신 **시각이 지나면 그때 올려 바로 공개** (인스타·스레드·페북과 같게).
     # 깨우기(PC·워커 10분마다)가 있어서 늦어도 10분 + 업로드 1~2분. 이미 예약 공개로 올라간 건은 그대로 둔다.
     due_yt = [it for it in q if yt_state(it) == "대기" and parse(it["publish_at"]) <= t] if yt_ok else []
+
+    due_ig, due_th, due_fb, due_yt = (spread(q, t, due_ig, "ig", save), spread(q, t, due_th, "th", save),
+                                      spread(q, t, due_fb, "fb", save), spread(q, t, due_yt, "yt", save))
 
     retry_th = [it for it in q if it.get("threads_status") == "게시" and not it.get("threads_reply_id") and it.get("threads_reply_error")
                 and it.get("threads_reply_attempts", 0) < MAX_ATTEMPTS] if th_ok else []
