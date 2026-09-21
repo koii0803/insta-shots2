@@ -173,9 +173,13 @@ def load_table(base=BASE_YEAR):
     return table
 
 
+ADULT_BORN_MAX = 2007        # 글에 적는 년생은 어른만 (2026-09-22 사장님 "어른만 하자"). 2008 이후 = 미성년 = 답글 기계도 안 봄
+
+
 def pick_years(years, rng):
-    """1968 이후에서 연속 세 바퀴(예: 1984 / 1996 / 2008). 명운재 상위 글 표기와 같다."""
-    ys = [y for y in years if y >= 1960]
+    """1960 이후 ~ 어른(ADULT_BORN_MAX)까지에서 연속 세 바퀴(예: 1983 / 1995 / 2007). 명운재 상위 글 표기와 같다.
+    2000년대 어른(2000~2007)도 들어간다. 2008 이후(미성년)는 글에 안 적는다 — 부르고 나서 답글 기계가 내치면 안 되니까."""
+    ys = [y for y in years if 1960 <= y <= ADULT_BORN_MAX]
     start = rng.randrange(0, max(1, len(ys) - 2))
     return ys[start:start + 3]
 
