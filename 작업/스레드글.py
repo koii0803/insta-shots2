@@ -372,11 +372,29 @@ def plan_today(day=None, rng=None, last_person=None):
             break
         kind = "사람" if (person_due and win == "밤" and not any(k == "사람" for k, _ in slots)) else "일상"
         slots.append((kind, pick(win)))
+    # 일상 자리는 **반드시 하나 이상**. 개수가 3개로 뽑히고 사람 글이 걸린 날은
+    # 띠2 + 사람1 이 돼서 일상이 0이 됐다(300번 중 27번 = 9%). 그러면 일진 글까지 같이 사라진다
+    # — 일진은 '일상 자리 중 첫 번째'를 쓰기 때문(2026-09-21 오늘 실제로 하루치 0개가 나왔다).
+    if not any(k == "일상" for k, _ in slots):
+        used = {t.hour for _, t in slots}
+        for win in extra:
+            h1 = SLOT_WINDOWS[win][0]
+            if not any(abs(h - h1) < 2 for h in used):
+                slots.append(("일상", pick(win)))
+                break
+        else:
+            slots.append(("일상", pick("아침")))
+
     slots.sort(key=lambda x: x[1])
     # 1시간 간격 보장: 겹치면 뒤로 민다
     for i in range(1, len(slots)):
         if (slots[i][1] - slots[i - 1][1]) < timedelta(hours=1):
             slots[i] = (slots[i][0], slots[i - 1][1] + timedelta(hours=1))
+    # 뒤로 밀다가 **자정을 넘긴 자리는 버린다.**
+    # 넘기면 그 글이 다음 날짜로 등록되고, 다음 날 하루치가 또 만들어져 글이 겹친다
+    # (2026-09-21 확인: 300번 중 6번 = 2%. 9/22 에 띠 글이 3개가 된 원인으로 보인다).
+    end = d0 + timedelta(days=1)
+    slots = [s for s in slots if s[1] < end]
     return [{"kind": k, "at": t.strftime("%Y-%m-%d %H:%M")} for k, t in slots]
 
 
