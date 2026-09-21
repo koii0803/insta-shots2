@@ -47,17 +47,35 @@ except Exception:
     pass
 
 # 스레드발행 스킬 '일상 글'·'사람 글' 절 그대로. 실측 원문은 공개 저장소에 안 넣는다(남의 글). 말투 규칙만.
-DAILY_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 사업 준비 중인 30대 남자. 출근 대신 사주 사이트를 만지며 산다. 직장인 흉내 안 낸다.
-오늘: {day} {weekday}요일, 시간대 {slot}({hour}시쯤 올라감).
-아래 규칙대로 스레드 일상 글 딱 하나만 써라. 설명·따옴표·제목 없이 글 본문만.
-- 1~3줄, 반말, 1인칭 "나". 마지막 줄은 반드시 질문으로 끝낸다(예: "다들 출근은 했어?", "저녁 메뉴 하나씩 던지고 가줘").
-- 틀 4개 중 하나: 썰 대화체 / 질문형 / A vs B / 목록형.
-- 소재는 요일·시간대 같은 누구나 겪는 것 + 내 상황(사업 준비 중, 사이트 만지는 중). 공감 문장은 누구나 하는 말이면 된다. 날씨·계절 체감은 모르니 쓰지 않는다(비·더위·추위 언급 금지). 몸 상태·병 얘기 없음.
-- 돈·매출·방문자·결제 같은 사업 숫자는 절대 쓰지 않는다. 사주 봐준다는 말, 실력 자랑, 상담 권유 없음.
+# 2026-09-21: 소재가 '요일 + 코딩'으로 굳어서 소재 바퀴(일상소재축.json) + 시간대 톤 + 실제 날씨를 넣음. 사업·코딩 소재는 뺌(= 사람 글 몫).
+DAILY_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 혼자 사는 30대 남자. 출근은 안 한다. 직장인 흉내 안 낸다.
+오늘: {day} {weekday}요일, {slot}({hour}시쯤 올라감).
+
+이번 글의 소재는 "{axis}" 하나로 간다. 다른 소재로 새지 않는다.
+  쓸 것: {axis_use}
+  피할 것: {axis_avoid}
+{weather}
+말투는 {tone}. **말투만 그렇게 한다. 소재는 위 "{axis}" 하나뿐이다. 말투 때문에 다른 소재로 새지 않는다.**
+마지막 질문은 {qname}으로 끝낸다 ({qhow})
+
+스레드 일상 글 딱 하나만 써라. 설명·따옴표·제목 없이 글 본문만.
+- 반말, 1인칭 "나". 마지막 줄은 반드시 물음표로 끝낸다.
+- **반드시 2줄 또는 3줄로 줄을 나눠 쓴다.** 한 덩어리로 길게 쓰지 않는다. 줄마다 한 문장이면 된다.
+- 140자 안. 짧을수록 좋다.
+
+**사람이 쓴 글처럼 보이는 게 제일 중요하다:**
+- **한 가지만 붙잡는다.** 소재 안에서도 장면 하나만 쓴다. 두세 가지를 나열하면 광고처럼 보인다.
+  (나쁜 예: 배달비도 비싸고 구독료도 나가고 통신비도 나가고 / 좋은 예: 배달비 5천원 보고 앱 껐다)
+- 구체적인 것 하나를 꼭 넣는다. 숫자·물건 이름·시각 같은 것 (예: "4천원", "3시", "편의점", "충전기 두 개").
+- 결론을 내지 않는다. 교훈·정리·조언으로 끝내지 않는다.
+- 문장을 다듬지 않는다. 앞뒤 대구를 맞추거나 운율을 만들지 않는다. 같은 구조의 문장을 나란히 쓰지 않는다.
+- "~하는 요즘이다", "~인 것 같다", "~기분이네" 같은 매끈한 마무리 안 쓴다. 말하다 만 것처럼 툭 끊어도 된다.
+- 감탄·호들갑 없다. 담담하게.
+- 내가 무슨 일 하는지 설명하지 않는다. 사주·사이트·일 얘기는 아예 꺼내지 않는다.
+
 - 링크·해시태그·이모지 없음. "스하리" 없음. 줄표(—) 없음.
-- 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확, 병·치료·죽음·임신 관련, 복권·로또·주식·코인, 부적·굿.
-- 200자 안.
-예(질문형): 월요일 아침. 출근은 안 하는데 8시에 눈 떠짐 / 사이트 만지다 보면 점심이야 / 다들 출근은 했어? (슬래시는 줄바꿈)"""
+- 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확, 병·치료·수술·죽음·임신·우울, 복권·로또·주식·투자·부동산, 부적·굿, 상담, 봐준다.
+- 사주 봐준다는 말, 실력 자랑, 상담 권유 없음."""
 
 PERSON_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 사업 처음 하는 사람이 낮은 자세로 도움을 구하는 글이다. 목적은 답글(훈수·시비·응원 전부 환영).
 실제 있었던 일(아래 소재)만 쓴다. 없는 일·숫자를 보태지 않는다.
@@ -111,8 +129,11 @@ def gemini(prompt):
     return text
 
 
-def ask(prompt, must_question=False, tries=3):
-    """제미나이에 부탁해 스레드글.check() 통과한 글. 못 얻으면 None(이유 출력)."""
+def ask(prompt, must_question=False, tries=3, daily=False):
+    """제미나이에 부탁해 스레드글.check() 통과한 글. 못 얻으면 None(이유 출력).
+
+    daily=True 면 일상 글 규칙(2~3줄, 140자)도 같이 본다 — 제미나이가 프롬프트를 자주 흘려서.
+    """
     last = ""
     for _ in range(tries):
         try:
@@ -127,11 +148,56 @@ def ask(prompt, must_question=False, tries=3):
             bad.append("질문으로 안 끝남")
         if t.count("\n") > 4:
             bad.append("줄 수 초과")
+        if daily:
+            n = len([l for l in t.splitlines() if l.strip()])
+            if n < 2:
+                bad.append("한 덩어리(줄 안 나눔)")
+            if len(t) > 145:
+                bad.append("%d자 (140 넘김)" % len(t))
         if not bad:
             return t
         last = ", ".join(bad) + " / " + t[:60].replace("\n", " ")
     print("  글 못 얻음: " + last)
     return None
+
+
+AXES = Path(__file__).resolve().parent / "일상소재축.json"
+
+
+def weather_today():
+    """서울 오늘 날씨 한 줄. open-meteo(무료·키 없음). 실패하면 None → '날씨' 축을 안 쓴다."""
+    url = ("https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.978"
+           "&daily=temperature_2m_max,temperature_2m_min,precipitation_sum"
+           "&current=temperature_2m&timezone=Asia%2FSeoul&forecast_days=1")
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            j = json.load(r)
+        d, c = j["daily"], j.get("current", {})
+        hi, lo = round(d["temperature_2m_max"][0]), round(d["temperature_2m_min"][0])
+        rain = d["precipitation_sum"][0] or 0
+        now_t = c.get("temperature_2m")
+        s = "서울 오늘 최고 %d도 최저 %d도" % (hi, lo)
+        if now_t is not None:
+            s += ", 지금 %d도" % round(now_t)
+        s += ", 비 %s" % ("옴(%.0fmm)" % rain if rain >= 1 else "안 옴")
+        return s
+    except Exception as e:
+        print("  날씨 못 받음(%s) → 날씨 축 건너뜀" % str(e)[:60])
+        return None
+
+
+def pick_axis(rec, rng, weather):
+    """최근 10개 일상 글에 쓴 축을 빼고 하나 고른다. 다 썼으면 가장 오래된 것부터 푼다."""
+    cfg = json.loads(AXES.read_text(encoding="utf-8"))
+    axes = [a for a in cfg["축"] if weather or not a.get("날씨필요")]
+    used = [r.get("훅") for r in rec if r.get("종류") == "일상" and r.get("훅")][-10:]
+    left = [a for a in axes if a["이름"] not in used]
+    if not left:                                  # 11개를 다 돌았으면 가장 오래 안 쓴 것
+        order = {n: i for i, n in enumerate(used)}
+        left = sorted(axes, key=lambda a: order.get(a["이름"], -1))[:3]
+    a = rng.choice(left)
+    q = rng.choice(cfg["질문틀"])
+    return a, q, cfg["시간대톤"]
 
 
 def slot_name(at):
@@ -180,6 +246,8 @@ def main():
     if not GEMINI_KEY:
         print("GEMINI_API_KEY 없음 → 일상·사람 글은 건너뜀 (저장소 Settings → Secrets 에 등록)")
 
+    weather = weather_today() if any(s["kind"] == "일상" for s in plan) else None
+    used_axes = []                                  # 오늘 이미 쓴 소재축
     made, skipped = [], []
     for slot in plan:
         kind, at = slot["kind"], slot["at"]
@@ -206,10 +274,18 @@ def main():
         elif kind == "일상":
             if not GEMINI_KEY:
                 skipped.append("%s 일상(키 없음)" % at[11:]); continue
-            text = ask(DAILY_PROMPT.format(day=day, weekday=WEEKDAY[datetime.strptime(day, "%Y-%m-%d").weekday()], slot=slot_name(at), hour=at[11:13]), must_question=True)
+            sl = slot_name(at)
+            axis, qform, tones = pick_axis(rec + [{"종류": "일상", "훅": h} for h in used_axes], random.Random(), weather)
+            print("  소재축: %s / 질문틀: %s" % (axis["이름"], qform["이름"]))
+            text = ask(DAILY_PROMPT.format(
+                day=day, weekday=WEEKDAY[datetime.strptime(day, "%Y-%m-%d").weekday()], slot=sl, hour=at[11:13],
+                axis=axis["이름"], axis_use=axis["쓸 것"], axis_avoid=axis["피할 것"],
+                weather=("오늘 날씨: %s (이 숫자와 다른 말 하지 않는다)\n" % weather) if axis.get("날씨필요") else "",
+                tone=tones.get(sl, tones["낮"]), qname=qform["이름"], qhow=qform["쓰는 법"]), must_question=True, daily=True)
             if not text:
-                log_err("%s 스레드 하루치: 일상 글 못 만듦(%s)" % (stamp(), at)); continue
-            ents, animal, hook = [], "", None
+                log_err("%s 스레드 하루치: 일상 글 못 만듦(%s, 축 %s)" % (stamp(), at, axis["이름"])); continue
+            used_axes.append(axis["이름"])          # 같은 날 두 번째 일상 글이 같은 축을 안 쓰게
+            ents, animal, hook = [], "", axis["이름"]
         else:   # 사람
             if not GEMINI_KEY:
                 skipped.append("%s 사람(키 없음)" % at[11:]); continue
