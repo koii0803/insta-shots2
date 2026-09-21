@@ -1,0 +1,90 @@
+# 스레드 자동답글 — 깃허브 대타 (2026-09-21 "창고 하나").
+# PC 스케줄러(SajuThreadsAutoReply, 5분마다)가 본체다. 깃허브는 **PC 심장박동이 20분 넘게 없을 때만** 대신 나선다.
+# PC 가 살아 있으면 작업/스레드자동답글.py 가 1초 만에 "물러남"으로 끝난다. PC 와 같은 코드·같은 R2(threads-reply/)를 쓴다.
+# 기록은 전부 R2 → 커밋 없음. 사주 엔진은 비공개 저장소 sajuarcade 를 열쇠(SAJUARCADE_READ_TOKEN)로 잠깐 받아 쓴다.
+# 이 저장소는 공개라 실행 화면이 누구나 보인다 → 기계가 깃허브에선 생년월일이 든 판단 이유를 안 찍는다.
+name: threads-reply
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: threads-reply          # shorts-publish 그룹과 다르게 — 쇼츠 발행과 안 겹친다
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Seoul                # 심장박동·대기 시각이 전부 한국 시간 문자열이라 러너도 한국 시간으로
+
+jobs:
+  reply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PC 가 살아 있나 (엔진 설치 전에 먼저 본다 — 살아 있으면 여기서 끝)
+        id: hb
+        env:
+          CLOUDFLARE_ACCOUNT_ID_2: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_2 }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          pip install -q boto3
+          cd 작업 && python - <<'EOF' >> "$GITHUB_OUTPUT"
+          import sys, 답글창고
+          m = 답글창고.창고().심장박동_지난분()
+          print("PC 심장박동 %s" % ("없음" if m > 10**5 else "%.0f분 전" % m), file=sys.stderr)
+          print("quiet=%d" % min(m, 10**6))
+          EOF
+
+      - name: PC 살아 있음 → 물러남
+        if: steps.hb.outputs.quiet < 20
+        run: echo "PC 가 ${{ steps.hb.outputs.quiet }}분 전에 살아 있었음 → 깃허브는 물러남"
+
+      - name: 사주 엔진 받기 (비공개 sajuarcade)
+        if: steps.hb.outputs.quiet >= 20
+        uses: actions/checkout@v4
+        with:
+          repository: koii0803/sajuarcade
+          token: ${{ secrets.SAJUARCADE_READ_TOKEN }}
+          path: sajuarcade
+
+      - uses: actions/setup-node@v4
+        if: steps.hb.outputs.quiet >= 20
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sajuarcade/package-lock.json
+
+      - name: 엔진 설치
+        if: steps.hb.outputs.quiet >= 20
+        run: cd sajuarcade && npm ci --no-audit --no-fund
+
+      - uses: actions/setup-python@v5
+        if: steps.hb.outputs.quiet >= 20
+        with:
+          python-version: "3.12"
+
+      - name: 파이썬·클로드 설치
+        if: steps.hb.outputs.quiet >= 20
+        run: |
+          pip install -q boto3 pynacl
+          npm install -g @anthropic-ai/claude-code
+
+      - name: 답글 한 바퀴 (PC 대신)
+        if: steps.hb.outputs.quiet >= 20
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLOUDFLARE_ACCOUNT_ID_2: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_2 }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          SAJUARCADE_DIR: ${{ github.workspace }}/sajuarcade
+          HEARTBEAT_MAX_MIN: "20"
+        run: python 작업/스레드자동답글.py
