@@ -265,6 +265,7 @@ def main():
                 log_err("%s 스레드 하루치: 띠 글 생성 실패 %s" % (stamp(), e))
                 continue
             text, ents, animal, hook = g["text"], 스레드글.auto_hide(g["text"]), g["animal"], g["hook"]
+            theme = g.get("theme", "흐름")                       # 2026-09-22 주제(흐름·돈·관계·기질·시기)
         elif kind == "일진":
             try:
                 g = 일진글.generate(day, random.Random(), avoid_keys=recent_keys)
@@ -299,14 +300,17 @@ def main():
         vid = "threads-%s-%s" % (kind, at.replace("-", "").replace(" ", "-").replace(":", ""))
         entry = {"id": vid, "video_url": "", "caption": "", "publish_at": at, "status": "없음", "youtube_url": "",
                  "threads_kind": kind, "threads_text": text, "threads_entities": ents, "threads_status": "대기"}
-        print("[%s] %s (%d자, 가림 %d곳)" % (kind, at, len(text), len(ents)))
+        print("[%s%s] %s (%d자, 가림 %d곳)" % (kind, ("·" + theme) if kind == "띠" else "", at, len(text), len(ents)))
         print("  " + (스레드글.show_hidden(text, ents) if ents else text).replace("\n", "\n  "))
         q = [x for x in q if x.get("id") != vid]
         q.append(entry)
         made.append(vid)
         if not DRY:
             with open(스레드글.RECORD, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"날짜": stamp(), "id": vid, "종류": kind, "띠": animal, "훅": hook, "text": text}, ensure_ascii=False) + "\n")
+                rec_row = {"날짜": stamp(), "id": vid, "종류": kind, "띠": animal, "훅": hook, "text": text}
+                if kind == "띠":
+                    rec_row["주제"] = theme
+                f.write(json.dumps(rec_row, ensure_ascii=False) + "\n")
     if DRY:
         print("[dry-run] 아무것도 안 바꿈. 만들 것 %d개, 건너뜀 %s" % (len(made), skipped))
         return 0
