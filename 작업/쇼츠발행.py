@@ -9,8 +9,8 @@
      페북은 같은 60일 사용자 토큰에 pages_manage_posts·publish_video 권한이 있을 때만(없으면 건너뜀, 기록 남김). 페이지 토큰은 매번 GET /{PAGE_ID}?fields=access_token 으로 뽑는다.
   0-b) 유튜브(2026-09-19): 금고에 youtube_refresh_token 이 있으면 refresh → 액세스 토큰 → channels.list(mine) 로 명운보감인지 확인.
      없거나 죽었으면 유튜브만 건너뛴다(기록 남김).
-  1-a) 유튜브: youtube_status 가 "대기"인 건은 publish_at 을 기다리지 않고 바로(다음 회차) R2 에서 mp4 를 받아 유튜브에 올린다.
-     publish_at 이 아직 앞이면 비공개 + publishAt(예약 공개), 이미 지났으면 바로 공개. → youtube_status "예약"/"공개", youtube_url.
+  1-a) 유튜브: youtube_status 가 "대기"인 건은 publish_at 이 지나면 R2 에서 mp4 를 받아 유튜브에 올리고 바로 공개한다(2026-09-22~).
+     (전엔 미리 올려 예약 공개했는데 사장님 지시로 바꿈. 코드상 publish_at 이 15분 이상 앞이면 여전히 예약 공개가 되지만 이제 그 경우는 안 온다.) → youtube_status "공개", youtube_url.
      하루 한도(API 10,000 = 업로드 6편)·인증 오류면 대기 유지, 영상 규격 오류면 "실패", 그 외 3회.
   1) 쇼츠예약.json 에서 publish_at 이 지난 건마다
      - 인스타: status 가 "대기"면 POST /{IG_USER_ID}/media (REELS) → 컨테이너 FINISHED 까지 → media_publish → status "게시"
@@ -681,7 +681,9 @@ def main():
     fb_ok = check_fb()
     due_fb = [it for it in q if fb_state(it) == "대기" and parse(it["publish_at"]) <= t] if fb_ok else []
     yt_ok = check_youtube()
-    due_yt = [it for it in q if yt_state(it) == "대기"] if yt_ok else []       # 유튜브는 시각을 안 기다린다(예약 공개로 올림)
+    # 2026-09-22 사장님 지시: 유튜브도 예약 공개 대신 **시각이 지나면 그때 올려 바로 공개** (인스타·스레드·페북과 같게).
+    # 깨우기(PC·워커 10분마다)가 있어서 늦어도 10분 + 업로드 1~2분. 이미 예약 공개로 올라간 건은 그대로 둔다.
+    due_yt = [it for it in q if yt_state(it) == "대기" and parse(it["publish_at"]) <= t] if yt_ok else []
 
     retry_th = [it for it in q if it.get("threads_status") == "게시" and not it.get("threads_reply_id") and it.get("threads_reply_error")
                 and it.get("threads_reply_attempts", 0) < MAX_ATTEMPTS] if th_ok else []
