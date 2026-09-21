@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "PC 가 살아 있어도 끝까지 돈다 (시험용. 같은 창고를 보니 중복은 안 난다)"
+        type: boolean
+        default: false
 
 concurrency:
   group: threads-reply          # shorts-publish 그룹과 다르게 — 쇼츠 발행과 안 겹친다
@@ -41,11 +46,11 @@ jobs:
           EOF
 
       - name: PC 살아 있음 → 물러남
-        if: steps.hb.outputs.quiet < 20
+        if: steps.hb.outputs.quiet < 20 && inputs.force != true
         run: echo "PC 가 ${{ steps.hb.outputs.quiet }}분 전에 살아 있었음 → 깃허브는 물러남"
 
       - name: 사주 엔진 받기 (비공개 sajuarcade)
-        if: steps.hb.outputs.quiet >= 20
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
         uses: actions/checkout@v4
         with:
           repository: koii0803/sajuarcade
@@ -53,29 +58,29 @@ jobs:
           path: sajuarcade
 
       - uses: actions/setup-node@v4
-        if: steps.hb.outputs.quiet >= 20
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: sajuarcade/package-lock.json
 
       - name: 엔진 설치
-        if: steps.hb.outputs.quiet >= 20
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
         run: cd sajuarcade && npm ci --no-audit --no-fund
 
       - uses: actions/setup-python@v5
-        if: steps.hb.outputs.quiet >= 20
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
         with:
           python-version: "3.12"
 
       - name: 파이썬·클로드 설치
-        if: steps.hb.outputs.quiet >= 20
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
         run: |
           pip install -q boto3 pynacl
           npm install -g @anthropic-ai/claude-code
 
       - name: 답글 한 바퀴 (PC 대신)
-        if: steps.hb.outputs.quiet >= 20
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
@@ -86,5 +91,5 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           SAJUARCADE_DIR: ${{ github.workspace }}/sajuarcade
-          HEARTBEAT_MAX_MIN: "20"
+          HEARTBEAT_MAX_MIN: ${{ inputs.force == true && '0' || '20' }}
         run: python 작업/스레드자동답글.py
