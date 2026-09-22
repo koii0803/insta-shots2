@@ -453,5 +453,17 @@
   "threads_container_id": "17909601267541214",
   "threads_posted_at": "2026-09-20 17:17",
   "threads_media_id": "18017986115728182"
+ },
+ {
+  "id": "threads-일상-20260922-1610",
+  "video_url": "",
+  "caption": "",
+  "publish_at": "2026-09-22 16:10",
+  "status": "없음",
+  "youtube_url": "",
+  "threads_kind": "일상",
+  "threads_text": "빨간 펜으로 이름 쓰면 진짜 이름 지워지는 줄 알고 울던 초등학생 때 생각나네.\n방금 택배 송장 쓰다가 나도 모르게 검은 펜 찾아서 쓰다가 피식했다.\n너네도 아직 이런 쓸데없는 미신 무의식중에 지키는 거 있어?",
+  "threads_entities": [],
+  "threads_status": "대기"
  }
 ]
