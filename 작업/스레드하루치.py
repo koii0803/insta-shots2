@@ -240,13 +240,17 @@ SYMPTOMS = Path(__file__).resolve().parent / "증상축.json"
 
 
 def _rotate(items, used, keep, rng):
-    """최근에 쓴 것을 빼고 하나 고른다. 다 썼으면 가장 오래 안 쓴 것 중에서."""
+    """최근에 쓴 것을 빼고 하나 고른다. 다 썼으면 가장 오래 안 쓴 것 중에서.
+
+    "무게"가 있으면 그만큼 자주 뽑힌다 — 고민 축(재회·결혼시기·이직·돈)은 3, 성격 축은 1.
+    성격 글은 좋아요만 받고 생년월일은 안 남는다(2026-09-23 사장님 "유입이 제일 잘 되는 주제로").
+    """
     recent = used[-keep:]
     left = [x for x in items if x["이름"] not in recent]
     if not left:
         order = {n: i for i, n in enumerate(recent)}
         left = sorted(items, key=lambda x: order.get(x["이름"], -1))[:3]
-    return rng.choice(left)
+    return rng.choices(left, weights=[x.get("무게", 1) for x in left])[0]
 
 
 def pick_symptom(rec, rng):
