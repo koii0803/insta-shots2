@@ -606,6 +606,10 @@ def plan_today(day=None, rng=None, last_person=None):
             break
         if person_due and win == "저녁" and not any(k == "사람" for k, _ in slots):
             kind = "사람"                          # 사람 글은 저녁(밤은 띠 글)
+        elif not any(k == "증상" for k, _ in slots):
+            # 증상 글 하루 1개 (2026-09-23). 띠를 안 부르고 '증상'으로 걸어서 12명 중 1명이 아니라 누구나 멈추게.
+            # 유입은 띠 글에서만 나오는데(조회 3,874 vs 일상 30~280) 그 띠 사람만 멈추는 게 한계였다.
+            kind = "증상"
         elif animal_extra > 0:
             kind, animal_extra = "띠", animal_extra - 1
         else:

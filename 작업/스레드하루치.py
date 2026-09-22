@@ -92,6 +92,31 @@ PERSON_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 사�
 - 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확.
 - 300자 안. 설명·따옴표·제목 없이 글 본문만."""
 
+# 증상 훅 글 (2026-09-23 사장님 지시). 띠를 안 부르고 '증상'으로 건다 — 12명 중 1명이 아니라 누구나 멈춘다.
+# 실측 근거: 우리 띠 글은 조회 3,874까지 나오지만 그 띠 사람만 멈춘다. 팔로워 5.8만 계정은 전부 이 방식.
+SYMPTOM_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 사주로 사람을 가르는 글이다. 반말. 30대 남자.
+목적: 읽는 사람이 "이거 난데" 하고 멈춰서 댓글에 생년월일을 남기게 하는 것.
+
+오늘 소재: {axis} — {symptom}
+이런 식으로 갈린다(참고만, 그대로 베끼지 마): {split}
+가르는 기준: {basis} — {basis_how}
+
+틀(반말, 총 8~12줄):
+① 첫 줄 = 증상 한마디. 띠·사주 얘기 없이 증상만. 짧게. (예: "잘못 자면 더 피곤해")
+② 둘째 줄 = 무슨 기준으로 가르는지 한 줄
+③ 본문 = 번호 붙여서 3~5개. 한 줄에 하나. "OO 많은 사람 : 증상 한마디" 꼴
+④ 증상은 **구체적으로**. 슬래시로 툭툭 끊어도 된다 (예: "누우면 내일 계획 / 지난 대화 재생 / 두 시 세 시")
+⑤ 마지막 = 네 년생 넣으면 30초. 링크는 첫 답글에
+⑥ 맨 끝 = 질문 한 줄로 끝낸다 (물음표로 끝)
+
+- 지금은 {month}월이다. 이 달 기운을 한 줄 넣어도 좋다(억지로는 말고).
+- 단정하지 않는다. "~인 사람이 있어", "~쪽이야" 처럼 연다.
+- 전문어(십성·신살 이름)는 써도 한 번만. 쓰면 바로 쉬운 말로 풀어준다.
+- 건강·병·수술·죽음·임신, 주식·투자·부동산·로또, 부적·굿 얘기 금지. 법으로 막혀 있다.
+- 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확, 합격.
+- 링크·해시태그·이모지·줄표(—) 없음. 450자 안.
+- 설명·따옴표·제목 없이 글 본문만."""
+
 WEEKDAY = "월화수목금토일"
 
 
@@ -135,10 +160,11 @@ def claude(prompt):
     return text
 
 
-def ask(prompt, must_question=False, tries=3, daily=False):
+def ask(prompt, must_question=False, tries=3, daily=False, maxlines=4, minlines=0):
     """클로드에 부탁해 스레드글.check() 통과한 글. 못 얻으면 None(이유 출력).
 
     daily=True 면 일상 글 규칙(2~3줄, 140자)도 같이 본다 — AI 가 프롬프트를 자주 흘려서.
+    maxlines/minlines = 줄 수. 증상 글은 목록 꼴이라 8~12줄이 정상이다(2026-09-23).
     """
     last = ""
     for _ in range(tries):
@@ -152,8 +178,10 @@ def ask(prompt, must_question=False, tries=3, daily=False):
             bad.append("링크·해시태그")
         if must_question and not t.rstrip().endswith("?"):
             bad.append("질문으로 안 끝남")
-        if t.count("\n") > 4:
-            bad.append("줄 수 초과")
+        if t.count("\n") > maxlines:
+            bad.append("줄 수 초과(%d줄, 한도 %d)" % (t.count("\n") + 1, maxlines + 1))
+        if minlines and len([l for l in t.splitlines() if l.strip()]) < minlines:
+            bad.append("줄이 너무 적음(%d줄 미만)" % minlines)
         if daily:
             n = len([l for l in t.splitlines() if l.strip()])
             if n < 2:
@@ -206,6 +234,20 @@ def pick_axis(rec, rng, weather):
     return a, q, cfg["시간대톤"]
 
 
+SYMPTOMS = Path(__file__).resolve().parent / "증상축.json"
+
+
+def pick_symptom(rec, rng):
+    """최근 10개 증상 글에 쓴 축을 빼고 하나 고른다 (일상 글과 같은 방식). (축, 가르는 기준)"""
+    cfg = json.loads(SYMPTOMS.read_text(encoding="utf-8"))
+    used = [r.get("훅") for r in rec if r.get("종류") == "증상" and r.get("훅")][-10:]
+    left = [a for a in cfg["축"] if a["이름"] not in used]
+    if not left:                                  # 12개를 다 돌았으면 가장 오래 안 쓴 것
+        order = {n: i for i, n in enumerate(used)}
+        left = sorted(cfg["축"], key=lambda a: order.get(a["이름"], -1))[:3]
+    return rng.choice(left), rng.choice(cfg["가르는 기준"])
+
+
 def slot_name(at):
     h = int(at[11:13]) * 60 + int(at[14:16])
     for name, (h1, m1, h2, m2) in 스레드글.SLOT_WINDOWS.items():
@@ -238,7 +280,7 @@ def main():
     # 오늘 스레드에 실제로 나갈(나간) 건만 센다. 페북 전용 건(threads_status "없음")·실패 건을 띠 글로 세면 그만큼 덜 만들어 하루가 빈다 (2026-09-22)
     today = [it for it in q if it.get("publish_at", "").startswith(day)
              and (it.get("threads_status") in ("대기", "게시") or (it.get("threads_text") and not it.get("threads_status")))]
-    have = {"띠": 0, "일상": 0, "사람": 0, "일진": 0}
+    have = {"띠": 0, "일상": 0, "사람": 0, "일진": 0, "증상": 0}
     for it in today:
         k = it.get("threads_kind") or "띠"
         have[k] = have.get(k, 0) + 1
@@ -256,6 +298,7 @@ def main():
 
     weather = weather_today() if any(s["kind"] == "일상" for s in plan) else None
     used_axes = []                                  # 오늘 이미 쓴 소재축
+    used_symptoms = []                              # 오늘 이미 쓴 증상축
     made, skipped = [], []
     for slot in plan:
         kind, at = slot["kind"], slot["at"]
@@ -295,6 +338,20 @@ def main():
                 log_err("%s 스레드 하루치: 일상 글 못 만듦(%s, 축 %s)" % (stamp(), at, axis["이름"])); continue
             used_axes.append(axis["이름"])          # 같은 날 두 번째 일상 글이 같은 축을 안 쓰게
             ents, animal, hook = [], "", axis["이름"]
+        elif kind == "증상":
+            if not CLAUDE_OK:
+                skipped.append("%s 증상(클로드 없음)" % at[11:]); continue
+            ax, basis = pick_symptom(rec + [{"종류": "증상", "훅": h} for h in used_symptoms], random.Random())
+            m = 스레드글.this_month(datetime.strptime(day, "%Y-%m-%d").date())
+            print("  증상축: %s / 가르는 기준: %s" % (ax["이름"], basis["이름"]))
+            text = ask(SYMPTOM_PROMPT.format(axis=ax["이름"], symptom=ax["증상"], split=ax["가르는 말"],
+                                             basis=basis["이름"], basis_how=basis["쓰는 법"],
+                                             month=(m or {}).get("월건", "이번")),
+                       must_question=True, maxlines=13, minlines=6)
+            if not text:
+                log_err("%s 스레드 하루치: 증상 글 못 만듦(%s, 축 %s)" % (stamp(), at, ax["이름"])); continue
+            used_symptoms.append(ax["이름"])       # 같은 날 두 번째가 같은 축을 안 쓰게
+            ents, animal, hook = [], "", ax["이름"]
         else:   # 사람
             if not CLAUDE_OK:
                 skipped.append("%s 사람(키 없음)" % at[11:]); continue
