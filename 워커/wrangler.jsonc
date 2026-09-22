@@ -1,6 +1,7 @@
 // 쇼츠 발행 깨우기 워커 (2026-09-22 사장님 지시 "1차 PC, 2차 워커").
-// 깃허브 자체 예약(cron)은 2~6시간씩 미뤄져서, 이 워커가 10분마다 깃허브 액션 둘을 직접 깨운다:
-//   shorts-publish (인스타·스레드·페북·유튜브 발행) · threads-reply (스레드 자동답글 대타)
+// 깃허브 자체 예약(cron)은 2~6시간씩 미뤄져서, 이 워커가 10분마다 깃허브 액션 셋을 직접 깨운다:
+//   shorts-publish (발행) · threads-reply (자동답글 대타) · threads-daily (하루치 글, 2026-09-23 추가
+//   — 깃허브 시계가 매일 2~3시간 늦어 아침 글 자리가 버려지고 있었다. 같은 날 두 번은 기록이 막는다)
 // 홈페이지 워커(sajuarcade)와 별개 — 홈페이지는 손 안 댄다. 비밀값은 wrangler secret GITHUB_TOKEN 하나(깃허브 워크플로 실행 권한).
 // 배포: env -u CLOUDFLARE_API_TOKEN -u CLOUDFLARE_ACCOUNT_ID npx wrangler deploy   (이 폴더에서)
 {
@@ -9,6 +10,6 @@
   "account_id": "483a48f9c76d80012303cb3f6260c1bb",
   "compatibility_date": "2026-09-01",
   "triggers": { "crons": ["*/10 * * * *"] },
-  "vars": { "GITHUB_REPO": "koii0803/insta-shots2", "WORKFLOWS": "shorts-publish.yml,threads-reply.yml" },
+  "vars": { "GITHUB_REPO": "koii0803/insta-shots2", "WORKFLOWS": "shorts-publish.yml,threads-reply.yml,threads-daily.yml" },
   "observability": { "enabled": true }
 }
