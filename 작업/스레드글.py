@@ -572,6 +572,8 @@ PLAN_MIN, PLAN_MAX = 4, 6     # 2026-09-22 사장님 지시 "최소 4~6개, 시�
 SLOT_WINDOWS = {"아침": (7, 30, 8, 50), "오전": (10, 0, 11, 20), "낮": (11, 40, 13, 30),
                 "오후": (15, 0, 16, 20), "저녁": (17, 30, 18, 50), "밤": (21, 0, 23, 30)}   # (시,분,시,분)
 PERSON_EVERY_DAYS = 3        # 사람 글은 3~4일에 한 번
+ANIMAL_EXTRA = 1             # 띠 글 2개(쇼츠와 같이) 말고 **추가로** 띠 자리 몇 개를 더 줄지.
+                             # 2026-09-23 사장님 "일상글 한 단계 낮추자" → 1. 0 으로 되돌리면 예전 비율.
 
 
 def plan_today(day=None, rng=None, last_person=None):
@@ -596,10 +598,18 @@ def plan_today(day=None, rng=None, last_person=None):
         person_due = (d0 - datetime.strptime(last_person, "%Y-%m-%d")).days >= rng.choice([PERSON_EVERY_DAYS, PERSON_EVERY_DAYS + 1])
     extra = ["아침", "오전", "오후", "저녁"]        # 띠 글이 낮·밤을 쓰니 나머지 4자리에서 랜덤으로 고른다
     rng.shuffle(extra)
+    # 2026-09-23 사장님 지시 "일상글 한 단계 낮추자": 남는 자리 중 하나를 띠 글로 돌린다.
+    # 일상 글이 하루 2.3개(45%)라 사주 얘기보다 많았다. 이 한 줄로 1.3개(26%)가 된다.
+    animal_extra = ANIMAL_EXTRA
     for win in extra:
         if len(slots) >= n:
             break
-        kind = "사람" if (person_due and win == "저녁" and not any(k == "사람" for k, _ in slots)) else "일상"   # 사람 글은 저녁(밤은 띠 글)
+        if person_due and win == "저녁" and not any(k == "사람" for k, _ in slots):
+            kind = "사람"                          # 사람 글은 저녁(밤은 띠 글)
+        elif animal_extra > 0:
+            kind, animal_extra = "띠", animal_extra - 1
+        else:
+            kind = "일상"
         slots.append((kind, pick(win)))
     # 일상 자리는 **반드시 하나 이상**. 개수가 3개로 뽑히고 사람 글이 걸린 날은
     # 띠2 + 사람1 이 돼서 일상이 0이 됐다(300번 중 27번 = 9%). 그러면 일진 글까지 같이 사라진다
