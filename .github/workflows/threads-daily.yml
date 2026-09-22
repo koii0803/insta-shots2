@@ -1,5 +1,5 @@
 # 스레드 하루치 만들기 — 매일 06:30 KST (PC 꺼져 있어도 그날 스레드 글이 나가게, 2026-09-19).
-# 작업/스레드하루치.py: 계획(3~5개) → 띠 글(파이썬) + 일상·사람 글(제미나이, Secrets GEMINI_API_KEY) → 쇼츠예약.json 에 넣고 커밋.
+# 작업/스레드하루치.py: 계획(3~5개) → 띠 글(파이썬) + 일상·사람 글(클로드, Secrets CLAUDE_CODE_OAUTH_TOKEN — 2026-09-23 제미나이에서 바꿈) → 쇼츠예약.json 에 넣고 커밋.
 # 발행은 shorts-publish 가 30분마다. PC 새벽 루틴이 쇼츠와 같이 넣은 띠 글이 있으면 그만큼 안 만든다(04:30 루틴 뒤에 돌도록 06:30).
 # 같은 날 두 번 안 만든다(스레드하루치기록.json). 깃허브가 cron 을 미루면 늦게 도는데, 시각 지난 자리는 건너뛴다.
 name: threads-daily
@@ -24,10 +24,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: 클로드 설치
+        run: npm install -g @anthropic-ai/claude-code
       - name: 하루치 만들기
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: python 작업/스레드하루치.py ${{ inputs.day != '' && format('--day {0}', inputs.day) || '' }}
       - name: 예약표 커밋
         if: always()

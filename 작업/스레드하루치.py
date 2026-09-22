@@ -8,11 +8,11 @@
        (PC 가 꺼져 쇼츠가 없으면 띠 글 2개를 여기서 만든다 → 스레드는 하루도 안 빈다)
      - 일상·사람: 오늘 같은 종류가 이미 있으면 안 만든다.
   3) 띠 글 = 스레드글.generate() + auto_hide()(가림 기준 표 그대로: 항목 줄 + 시점 앞부분).
-     일진 글 = 일진글.py(오늘 달력, 규칙만, 제미나이 없음) — 일상 자리 중 첫 번째. 나머지 일상 글 = 제미나이(GEMINI_API_KEY)에 스킬 '일상 글' 절 규칙으로 부탁 → 스레드글.check() 통과할 때까지 3번.
-     사람 글 = 실제 있었던 일만 → 스레드소재.txt 에 사장님(또는 PC AI)이 적어 둔 줄 하나를 써서 제미나이에 부탁. 소재 없으면 그 자리는 비운다(안 지어냄).
+     일진 글 = 일진글.py(오늘 달력, 규칙만, AI 없음) — 일상 자리 중 첫 번째. 나머지 일상 글 = 클로드에 스킬 '일상 글' 절 규칙으로 부탁 → 스레드글.check() 통과할 때까지 3번.
+     사람 글 = 실제 있었던 일만 → 스레드소재.txt 에 사장님(또는 PC AI)이 적어 둔 줄 하나를 써서 클로드에 부탁. 소재 없으면 그 자리는 비운다(안 지어냄).
   4) 예약표에 threads-<종류>-<시각> 건으로 넣고(threads_status 대기), 스레드글기록.jsonl 에 기록. 발행은 shorts-publish 가 30분마다.
   5) 스레드하루치기록.json 에 오늘 날짜를 적어 같은 날 두 번 안 돈다(수동 실행해도).
-제미나이 키가 없으면 띠 글만 만들고 일상·사람은 건너뛴다(기록 남김, 액션은 성공).
+클로드가 없으면 띠 글만 만들고 일상·사람은 건너뛴다(기록 남김, 액션은 성공).
 로컬 시험: python 작업/스레드하루치.py --dry-run [--day 2026-09-19]  (아무것도 안 바꿈. 키 없으면 일상 글은 건너뜀)
 """
 import os
@@ -20,6 +20,8 @@ import re
 import sys
 import json
 import random
+import shutil
+import subprocess
 import urllib.request
 from pathlib import Path
 from datetime import datetime
@@ -36,10 +38,11 @@ DONE = ROOT / "스레드하루치기록.json"
 TOPICS = ROOT / "스레드소재.txt"          # 사람 글 소재. 한 줄에 하나, 위에서부터 쓰고 지운다. 실제 있었던 일만
 KST = ZoneInfo("Asia/Seoul")
 DRY = "--dry-run" in sys.argv
-GEMINI_KEYS = [k for k in (os.environ.get("GEMINI_API_KEY", "").strip(), os.environ.get("GEMINI_API_KEY_2", "").strip()) if k]   # 1번 키 하루 20회 무료 한도(429)면 2번 키로 (14번 스킬과 같은 방식)
-GEMINI_KEY = GEMINI_KEYS[0] if GEMINI_KEYS else ""
-GEMINI_MODEL = "gemini-3.5-flash"     # = 14.블로그소제목AI썸네일 스킬과 같은 모델(고정)
-GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"
+# 글 쓰는 AI = 클로드 (2026-09-23 사장님 지시 "제미나이 근처도 가지 마").
+# 답글 기계(스레드자동답글.py)와 **같은 방식·같은 열쇠**다. 구독으로 돌아 API 키가 없다.
+# 깃허브에선 Secrets 의 CLAUDE_CODE_OAUTH_TOKEN, PC 에선 터미널 로그인을 그대로 쓴다.
+CLAUDE_MODEL = "sonnet"
+CLAUDE_OK = bool(shutil.which("claude") or shutil.which("claude.cmd"))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -107,39 +110,42 @@ def log_err(line):
             f.write(line + "\n")
 
 
-def gemini(prompt):
-    """글 본문 문자열. 실패면 예외."""
-    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
-                       "generationConfig": {"temperature": 1.0, "maxOutputTokens": 2000,
-                                            "thinkingConfig": {"thinkingBudget": 0}}}).encode("utf-8")   # 생각 토큰이 출력 예산을 먹어 글이 잘림(2026-09-18 겪음)
-    global GEMINI_KEY
-    req = urllib.request.Request(GEMINI % (GEMINI_MODEL, GEMINI_KEY), body, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            j = json.load(r)
-    except urllib.error.HTTPError as e:
-        if e.code == 429 and GEMINI_KEY != GEMINI_KEYS[-1]:
-            GEMINI_KEY = GEMINI_KEYS[GEMINI_KEYS.index(GEMINI_KEY) + 1]
-            print("  제미나이 한도(429) → 다음 키로")
-            return gemini(prompt)
-        raise
-    text = "".join(p.get("text", "") for p in j["candidates"][0]["content"]["parts"]).strip()
-    text = text.strip('"“”\'` ').replace("—", ",").strip()
+def claude(prompt):
+    """글 본문 문자열. 실패면 예외.
+
+    답글 기계와 같은 요령: 도구를 아예 안 싣는다(--tools Read --disallowedTools Read).
+    도구 설명이 요청마다 2만 7천 토큰을 먹는다 — 우리는 글만 받으면 되니 필요 없다.
+    """
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", CLAUDE_MODEL,
+           "--safe-mode", "--system-prompt", "너는 스레드에 글을 쓰는 사람이다. 시킨 글 한 편만 그대로 내놓는다. 설명·머리말·따옴표 없이.",
+           "--tools", "Read", "--disallowedTools", "Read"]
+    r = subprocess.run(cmd, capture_output=True, timeout=180,
+                       encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+    if r.returncode != 0:
+        raise RuntimeError("claude 실행 실패: %s" % (r.stderr or "")[:150])
+    outer = json.loads(r.stdout)
+    if outer.get("is_error"):
+        msg = str(outer.get("result"))
+        if re.search(r"authenticat|OAuth|Login expired|로그인", msg, re.I):
+            raise RuntimeError("로그인만료: %s" % msg[:120])
+        raise RuntimeError("claude 오류: %s" % msg[:150])
+    text = (outer.get("result") or "").strip()
+    text = text.strip("\"“”'` ").replace("—", ",").strip()
     text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
     return text
 
 
 def ask(prompt, must_question=False, tries=3, daily=False):
-    """제미나이에 부탁해 스레드글.check() 통과한 글. 못 얻으면 None(이유 출력).
+    """클로드에 부탁해 스레드글.check() 통과한 글. 못 얻으면 None(이유 출력).
 
-    daily=True 면 일상 글 규칙(2~3줄, 140자)도 같이 본다 — 제미나이가 프롬프트를 자주 흘려서.
+    daily=True 면 일상 글 규칙(2~3줄, 140자)도 같이 본다 — AI 가 프롬프트를 자주 흘려서.
     """
     last = ""
     for _ in range(tries):
         try:
-            t = gemini(prompt)
+            t = claude(prompt)
         except Exception as e:
-            last = "제미나이 호출 실패: %s" % str(e)[:200]
+            last = "클로드 호출 실패: %s" % str(e)[:200]
             continue
         bad = 스레드글.check(t)
         if "#" in t or "http" in t:
@@ -245,8 +251,8 @@ def main():
             break
     recent_keys = [r.get("훅") for r in rec[-20:] if r.get("종류") == "일진"]
     print("계획 %d개: %s / 이미 있음 %s" % (len(plan), ", ".join("%s %s" % (x["at"][11:], x["kind"]) for x in plan), have))
-    if not GEMINI_KEY:
-        print("GEMINI_API_KEY 없음 → 일상·사람 글은 건너뜀 (저장소 Settings → Secrets 에 등록)")
+    if not CLAUDE_OK:
+        print("claude 가 없음 → 일상·사람 글은 건너뜀 (깃허브: Secrets CLAUDE_CODE_OAUTH_TOKEN, PC: 터미널에서 claude 로그인)")
 
     weather = weather_today() if any(s["kind"] == "일상" for s in plan) else None
     used_axes = []                                  # 오늘 이미 쓴 소재축
@@ -275,7 +281,7 @@ def main():
                 log_err("%s 스레드 하루치: 일진 글 생성 실패 %s" % (stamp(), e)); continue
             text, ents, animal, hook = g["text"], [], g["animal"], g["key"]
         elif kind == "일상":
-            if not GEMINI_KEY:
+            if not CLAUDE_OK:
                 skipped.append("%s 일상(키 없음)" % at[11:]); continue
             sl = slot_name(at)
             axis, qform, tones = pick_axis(rec + [{"종류": "일상", "훅": h} for h in used_axes], random.Random(), weather)
@@ -290,7 +296,7 @@ def main():
             used_axes.append(axis["이름"])          # 같은 날 두 번째 일상 글이 같은 축을 안 쓰게
             ents, animal, hook = [], "", axis["이름"]
         else:   # 사람
-            if not GEMINI_KEY:
+            if not CLAUDE_OK:
                 skipped.append("%s 사람(키 없음)" % at[11:]); continue
             topic = pop_topic()
             if not topic:
