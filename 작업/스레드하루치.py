@@ -229,7 +229,9 @@ def main():
         print("오늘(%s) 이미 만들었음 (%s). 끝" % (day, done.get("결과")))
         return 0
     q = json.loads(QUEUE.read_text(encoding="utf-8")) if QUEUE.exists() else []
-    today = [it for it in q if it.get("publish_at", "").startswith(day) and (it.get("threads_text") or it.get("threads_status"))]
+    # 오늘 스레드에 실제로 나갈(나간) 건만 센다. 페북 전용 건(threads_status "없음")·실패 건을 띠 글로 세면 그만큼 덜 만들어 하루가 빈다 (2026-09-22)
+    today = [it for it in q if it.get("publish_at", "").startswith(day)
+             and (it.get("threads_status") in ("대기", "게시") or (it.get("threads_text") and not it.get("threads_status")))]
     have = {"띠": 0, "일상": 0, "사람": 0, "일진": 0}
     for it in today:
         k = it.get("threads_kind") or "띠"

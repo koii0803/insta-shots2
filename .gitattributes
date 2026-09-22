@@ -1,0 +1,5 @@
+# 예약표는 건(id) 단위로 합친다(작업/예약표합치기.py, 드라이버 이름 queue). 기록 파일은 양쪽 줄을 다 잇는다(union). 2026-09-22
+쇼츠예약.json merge=queue
+발행기록.txt merge=union
+오류기록.txt merge=union
+스레드글기록.jsonl merge=union

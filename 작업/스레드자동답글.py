@@ -113,14 +113,9 @@ def runlog(msg):
 
 
 def log_err(msg):
-    line = "%s [%s] %s" % (now().strftime("%Y-%m-%d %H:%M"), WHO, msg)
-    print(line)
-    if WHO == "PC":                              # 깃허브에선 체크아웃이 사라지니 화면(액션 로그)에만
-        try:
-            with open(REPO / "오류기록.txt", "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except Exception:
-            pass
+    """오류도 실행기록(로컬)에만. 저장소 오류기록.txt 엔 안 쓴다 (2026-09-22) — PC 가 거기 쓰면 커밋 안 된 줄이 남아
+    upload_instagram 의 git pull 이 막히고(실제로 7커밋 뒤처져 있었음), 액션과 같은 파일에 양쪽이 덧붙여 충돌이 난다."""
+    runlog("오류: " + msg)
 
 
 # ── 저장: 전부 R2 (2026-09-21 "창고 하나") ─────────────────────────

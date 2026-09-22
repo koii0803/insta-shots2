@@ -112,6 +112,39 @@ def spread(q, t, due, tgt, save):
     if len(fresh) > 1:
         print("  %s: %d건 밀림 → 이번 회차엔 1개만, 나머지는 %d분 뒤부터" % (name, len(fresh), MIN_GAP_MIN[tgt]))
     return fresh[:1]
+
+# ── 예약표 점검: 하루에 영상이 MAX_VIDEOS_PER_DAY 넘게 잡혀 있으면 알린다 (2026-09-22 사고: 낮에 3편). 막지는 않는다(PC schedule.py 가 막는다) ──
+MAX_VIDEOS_PER_DAY = 2                     # = PC schedule.py SLOTS 개수(낮·밤)
+PILEUP_LOG = ROOT / "몰림경고.json"         # {날짜: 개수} 같은 날·같은 개수는 한 번만 알린다
+
+
+def warn_pileup(q, t):
+    per = {}
+    for it in q:
+        if not it.get("video_url"):
+            continue                                                   # 스레드 글만 있는 건은 영상이 아니다
+        live = (it.get("status", "대기") in ("대기", "게시") or it.get("youtube_status") in ("대기", "예약", "공개")
+                or it.get("fb_status") in ("대기", "게시"))
+        if live and it.get("publish_at", "")[:10] >= t.strftime("%Y-%m-%d"):
+            per.setdefault(it["publish_at"][:10], []).append(it["id"])
+    bad = {d: ids for d, ids in per.items() if len(ids) > MAX_VIDEOS_PER_DAY}
+    if not bad:
+        return
+    try:
+        seen = json.loads(PILEUP_LOG.read_text(encoding="utf-8")) if PILEUP_LOG.exists() else {}
+    except Exception:
+        seen = {}
+    for d, ids in sorted(bad.items()):
+        if seen.get(d) == len(ids):
+            continue
+        line = "%s 예약표 점검: %s 에 영상 %d편 (하루 최대 %d): %s" % (stamp(), d, len(ids), MAX_VIDEOS_PER_DAY, ", ".join(ids))
+        log(LOG_ERR, line)
+        tg_send("⚠ " + line + "\n\nPC 에서 python schedule.py list 로 보고 python schedule.py move 로 옮겨")
+        seen[d] = len(ids)
+    if not DRY:
+        PILEUP_LOG.write_text(json.dumps(seen, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 POLL_SEC, POLL_MAX = 10, 30          # 10초 × 30 = 5분
 THREADS_TEXT_MAX = 500
 THREADS_REPLY = "사람이 봐주는 데 아님. 사주 달력표 그대로 뽑아주는 곳. 네 년생 30초, 링크 ↓" + "\n" + "https://sajuarcade.com"   # = PC config.THREADS_REPLY
@@ -684,6 +717,7 @@ def main():
         return 0
     q = json.loads(QUEUE.read_text(encoding="utf-8"))
     t = now()
+    warn_pileup(q, t)
     due_ig = [it for it in q if it.get("status", "대기") == "대기" and parse(it["publish_at"]) <= t]
 
     def save():

@@ -35,6 +35,8 @@ jobs:
           git add -A
           git diff --cached --quiet && exit 0
           git commit -m "인스타 예약발행 실행"
+          # 예약표는 id 단위로 합친다(작업/예약표합치기.py, .gitattributes merge=queue) — 글자 충돌로 결과 커밋을 잃고 같은 영상이 또 올라가는 일 방지 (2026-09-22)
+          git config merge.queue.driver "python 작업/예약표합치기.py %O %A %B"
           for i in 1 2 3; do
             git pull --rebase && git push && exit 0
             echo "푸시 실패, 다시 ($i/3)"; sleep 5
