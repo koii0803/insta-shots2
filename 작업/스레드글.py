@@ -29,6 +29,9 @@ import random
 import argparse
 import subprocess
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo("Asia/Seoul")
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -149,6 +152,42 @@ CLOSINGS = {
 
 # ⑪ 복채
 FEES = ["복채는 스하리로 받을게", "복채는 스크랩 하트 리포스트", "복채는 스하리면 충분해", "복채는 스하리. 그거면 돼"]
+
+
+# ── 이번 달(절기 월) ────────────────────────────────────────────────────
+# 2026-09-23 사장님 지시. 우리 글은 전부 "올해 병오년"이라 급해 보이지 않았다.
+# 잘 되는 계정(@taebaek_saju, 팔로워 5.8만)은 "지금 정유월은 금 기운 달이라"처럼 **이번 달**을 매번 건다.
+# 절기 시작일은 엔진에서 미리 받아 월건표.json 에 굳혀 뒀다(액션엔 엔진이 없다). 2027-12 까지 들어 있음.
+MONTH_TABLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "월건표.json")
+
+# 오행별 한마디. "이번 달이 어떤 기운인지" 한 줄로만 — 풀이는 안 한다.
+MONTH_NOTE = {
+    "목": ["뻗어 나가는 기운이 도는 달이야", "새로 벌이는 기운이 도는 달이야"],
+    "화": ["드러나고 퍼지는 기운이 도는 달이야", "속도가 붙는 기운이 도는 달이야"],
+    "토": ["쌓이고 눌러앉는 기운이 도는 달이야", "자리를 다지는 기운이 도는 달이야"],
+    "금": ["끊고 정리하는 기운이 도는 달이야", "결론이 나는 기운이 도는 달이야"],
+    "수": ["가라앉고 모으는 기운이 도는 달이야", "안으로 파고드는 기운이 도는 달이야"],
+}
+
+
+def this_month(day=None):
+    """오늘이 속한 절기 월. 표에 없으면 None → 글에서 그 줄을 통째로 뺀다(억지로 안 쓴다)."""
+    try:
+        with open(MONTH_TABLE, encoding="utf-8") as f:
+            rows = json.load(f)["달"]
+    except Exception:
+        return None
+    key = (day or datetime.now(KST).date()).isoformat()
+    cur = [r for r in rows if r["시작"] <= key]
+    return cur[-1] if cur else None
+
+
+def month_line(rng, day=None):
+    """"지금 정유월은 끊고 정리하는 기운이 도는 달이야" 한 줄. 표에 없으면 None."""
+    m = this_month(day)
+    if not m:
+        return None
+    return "지금 %s월은 %s" % (m["월건"], rng.choice(MONTH_NOTE.get(m["오행"], ["기운이 도는 달이야"])))
 
 
 # ── 엔진: 띠별 년생·올해 관계 ───────────────────────────────────────────
@@ -371,6 +410,9 @@ def build_theme(animal, table, rng, theme):
     lines.append("%s %s띠(%s)" % (EMOJI[animal], animal, " / ".join(str(y) for y in years)))
     lines.append(rng.choice(TRAITS[animal]))
     lines.append(rng.choice(T["flows"][kind]).format(a=animal))
+    ml = month_line(rng)                      # 이번 달 한 줄 (표에 없으면 건너뜀)
+    if ml:
+        lines.append(ml)
     items = " · ".join(rng.sample(T["items"][kind], 3))
     lines.append(rng.choice(T["blocked"][kind]).format(items=items))
     lines.append(rng.choice(T["move"][kind]))
@@ -401,6 +443,9 @@ def build(animal, table, rng):
     lines.append("%s %s띠(%s)" % (EMOJI[animal], animal, " / ".join(str(y) for y in years)))
     lines.append(rng.choice(TRAITS[animal]))
     lines.append(rng.choice(FLOWS[kind]).format(a=animal))
+    ml = month_line(rng)                      # 이번 달 한 줄 (표에 없으면 건너뜀)
+    if ml:
+        lines.append(ml)
     pool = POOLS[kind]
     items = " · ".join(rng.sample(pool["items"], 3))
     lines.append(rng.choice(pool["blocked"]).format(items=items))
