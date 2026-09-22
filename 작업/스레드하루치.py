@@ -100,11 +100,12 @@ SYMPTOM_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 사
 오늘 소재: {axis} — {symptom}
 이런 식으로 갈린다(참고만, 그대로 베끼지 마): {split}
 가르는 기준: {basis} — {basis_how}
+오늘 글꼴: {form} — {form_how}
 
-틀(반말, 총 8~12줄):
+틀(반말, 총 6~12줄):
 ① 첫 줄 = 증상 한마디. 띠·사주 얘기 없이 증상만. 짧게. (예: "잘못 자면 더 피곤해")
 ② 둘째 줄 = 무슨 기준으로 가르는지 한 줄
-③ 본문 = 번호 붙여서 3~5개. 한 줄에 하나. "OO 많은 사람 : 증상 한마디" 꼴
+③ 본문 = **위 글꼴대로** 쓴다. 글꼴이 목록이 아니면 번호를 억지로 붙이지 않는다
 ④ 증상은 **구체적으로**. 슬래시로 툭툭 끊어도 된다 (예: "누우면 내일 계획 / 지난 대화 재생 / 두 시 세 시")
 ⑤ 마지막 = 네 년생 넣으면 30초. 링크는 첫 답글에
 ⑥ 맨 끝 = 질문 한 줄로 끝낸다 (물음표로 끝)
@@ -113,7 +114,8 @@ SYMPTOM_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 사
 - 단정하지 않는다. "~인 사람이 있어", "~쪽이야" 처럼 연다.
 - 전문어(십성·신살 이름)는 써도 한 번만. 쓰면 바로 쉬운 말로 풀어준다.
 - 건강·병·수술·죽음·임신, 주식·투자·부동산·로또, 부적·굿 얘기 금지. 법으로 막혀 있다.
-- 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확, 합격.
+- 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확, 합격, 1위.
+  ("1위"는 광고법상 순위 표시라 막혀 있다. 순서를 매길 땐 "제일 심한 건 / 그다음은" 처럼 쓴다.)
 - 링크·해시태그·이모지·줄표(—) 없음. 450자 안.
 - 설명·따옴표·제목 없이 글 본문만."""
 
@@ -237,15 +239,29 @@ def pick_axis(rec, rng, weather):
 SYMPTOMS = Path(__file__).resolve().parent / "증상축.json"
 
 
+def _rotate(items, used, keep, rng):
+    """최근에 쓴 것을 빼고 하나 고른다. 다 썼으면 가장 오래 안 쓴 것 중에서."""
+    recent = used[-keep:]
+    left = [x for x in items if x["이름"] not in recent]
+    if not left:
+        order = {n: i for i, n in enumerate(recent)}
+        left = sorted(items, key=lambda x: order.get(x["이름"], -1))[:3]
+    return rng.choice(left)
+
+
 def pick_symptom(rec, rng):
-    """최근 10개 증상 글에 쓴 축을 빼고 하나 고른다 (일상 글과 같은 방식). (축, 가르는 기준)"""
+    """축·가르는 기준·글꼴을 따로 돌려 고른다. (축, 기준, 글꼴)
+
+    경우의 수 24 × 6 × 5 = 720 (2026-09-23 사장님 "경우의 수를 여러 가지 뒀으면").
+    축은 최근 10개, 기준·글꼴은 최근 4개를 피한다 — 축은 소재라 오래 피해야 하고,
+    기준·글꼴은 개수가 적어 너무 오래 피하면 돌 게 없다.
+    """
     cfg = json.loads(SYMPTOMS.read_text(encoding="utf-8"))
-    used = [r.get("훅") for r in rec if r.get("종류") == "증상" and r.get("훅")][-10:]
-    left = [a for a in cfg["축"] if a["이름"] not in used]
-    if not left:                                  # 12개를 다 돌았으면 가장 오래 안 쓴 것
-        order = {n: i for i, n in enumerate(used)}
-        left = sorted(cfg["축"], key=lambda a: order.get(a["이름"], -1))[:3]
-    return rng.choice(left), rng.choice(cfg["가르는 기준"])
+    rows = [r for r in rec if r.get("종류") == "증상"]
+    ax = _rotate(cfg["축"], [r.get("훅") for r in rows if r.get("훅")], 10, rng)
+    basis = _rotate(cfg["가르는 기준"], [r.get("기준") for r in rows if r.get("기준")], 4, rng)
+    form = _rotate(cfg["글꼴"], [r.get("글꼴") for r in rows if r.get("글꼴")], 4, rng)
+    return ax, basis, form
 
 
 def slot_name(at):
@@ -341,17 +357,20 @@ def main():
         elif kind == "증상":
             if not CLAUDE_OK:
                 skipped.append("%s 증상(클로드 없음)" % at[11:]); continue
-            ax, basis = pick_symptom(rec + [{"종류": "증상", "훅": h} for h in used_symptoms], random.Random())
+            ax, basis, form = pick_symptom(rec + used_symptoms, random.Random())
             m = 스레드글.this_month(datetime.strptime(day, "%Y-%m-%d").date())
-            print("  증상축: %s / 가르는 기준: %s" % (ax["이름"], basis["이름"]))
+            print("  증상축: %s / 기준: %s / 글꼴: %s" % (ax["이름"], basis["이름"], form["이름"]))
             text = ask(SYMPTOM_PROMPT.format(axis=ax["이름"], symptom=ax["증상"], split=ax["가르는 말"],
                                              basis=basis["이름"], basis_how=basis["쓰는 법"],
+                                             form=form["이름"], form_how=form["쓰는 법"],
                                              month=(m or {}).get("월건", "이번")),
-                       must_question=True, maxlines=13, minlines=6)
+                       must_question=True, maxlines=13, minlines=5)
             if not text:
                 log_err("%s 스레드 하루치: 증상 글 못 만듦(%s, 축 %s)" % (stamp(), at, ax["이름"])); continue
-            used_symptoms.append(ax["이름"])       # 같은 날 두 번째가 같은 축을 안 쓰게
+            # 같은 날 두 번째가 같은 축·기준·글꼴을 안 쓰게
+            used_symptoms.append({"종류": "증상", "훅": ax["이름"], "기준": basis["이름"], "글꼴": form["이름"]})
             ents, animal, hook = [], "", ax["이름"]
+            sym_meta = {"기준": basis["이름"], "글꼴": form["이름"]}
         else:   # 사람
             if not CLAUDE_OK:
                 skipped.append("%s 사람(키 없음)" % at[11:]); continue
@@ -375,6 +394,8 @@ def main():
                 rec_row = {"날짜": stamp(), "id": vid, "종류": kind, "띠": animal, "훅": hook, "text": text}
                 if kind == "띠":
                     rec_row["주제"] = theme
+                if kind == "증상":
+                    rec_row.update(sym_meta)       # 기준·글꼴도 남겨야 다음에 안 겹친다
                 f.write(json.dumps(rec_row, ensure_ascii=False) + "\n")
     if DRY:
         print("[dry-run] 아무것도 안 바꿈. 만들 것 %d개, 건너뜀 %s" % (len(made), skipped))
