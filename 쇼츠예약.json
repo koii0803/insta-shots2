@@ -407,7 +407,10 @@
   "threads_kind": "일상",
   "threads_text": "배달비 4천원 뜨길래 그냥 나가서 편의점 갔어.\n편의점에서 컵라면 2100원 물 900원 사고 3천원.\n어차피 똑같이 쓰네 이거 나가는 거랑 시켜먹는 거 뭐가 낫냐?",
   "threads_entities": [],
-  "threads_status": "대기"
+  "threads_status": "게시",
+  "threads_container_id": "17910102426541214",
+  "threads_posted_at": "2026-09-23 15:20",
+  "threads_media_id": "18088343552247123"
  },
  {
   "id": "threads-띠-20260923-2222",
