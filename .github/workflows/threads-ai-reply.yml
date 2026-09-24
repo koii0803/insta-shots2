@@ -1,0 +1,98 @@
+# AI 자동답변 (6시간마다) — 깃허브 대타.
+# 본체(스레드자동답글.py)는 3자 이하 댓글을 AI 를 부르기도 전에 버린다(MIN_LEN).
+# 그런데 본체는 매 답글을 질문으로 끝낸다 → "남자야 여자야" 물어 놓고 "여자" 라는 답을 자기가 버린다.
+# 이 워크플로가 그걸 주워서 AI 에게 "끝난 얘기냐 이어지는 얘기냐" 만 묻고, 이어지면 답글을 단다.
+#
+# PC 스케줄러(SajuAIReply6h, 00:15·06:15·12:15·18:15)가 본체다.
+# 깃허브는 threads-reply 와 똑같이 **PC 심장박동이 20분 넘게 없을 때만** 나선다.
+# 본체와 같은 R2 잠금을 잡아서 답글 봇과 동시에 돌지 않는다 → 중복 발행 없음.
+name: threads-ai-reply
+on:
+  schedule:
+    - cron: "10 */6 * * *"      # UTC. 한국시간 09:10 · 15:10 · 21:10 · 03:10
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "PC 가 살아 있어도 끝까지 돈다 (시험용. 같은 창고·같은 잠금이라 중복은 안 난다)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: threads-reply          # 답글 봇과 **같은 그룹**. 깃허브 안에서도 둘이 안 겹치게
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Seoul
+
+jobs:
+  ai-reply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PC 가 살아 있나 (엔진 설치 전에 먼저 본다)
+        id: hb
+        env:
+          CLOUDFLARE_ACCOUNT_ID_2: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_2 }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          pip install -q boto3
+          cd 작업 && python - <<'EOF' >> "$GITHUB_OUTPUT"
+          import sys, 답글창고
+          m = 답글창고.창고().심장박동_지난분()
+          print("PC 심장박동 %s" % ("없음" if m > 10**5 else "%.0f분 전" % m), file=sys.stderr)
+          print("quiet=%d" % min(m, 10**6))
+          EOF
+
+      - name: PC 살아 있음 → 물러남
+        if: steps.hb.outputs.quiet < 20 && inputs.force != true
+        run: echo "PC 가 ${{ steps.hb.outputs.quiet }}분 전에 살아 있었음 → 깃허브는 물러남"
+
+      - name: 사주 엔진 받기 (비공개 sajuarcade)
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
+        uses: actions/checkout@v4
+        with:
+          repository: koii0803/sajuarcade
+          token: ${{ secrets.SAJUARCADE_READ_TOKEN }}
+          path: sajuarcade
+
+      - uses: actions/setup-node@v4
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sajuarcade/package-lock.json
+
+      - name: 엔진 설치
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
+        run: cd sajuarcade && npm ci --no-audit --no-fund
+
+      - uses: actions/setup-python@v5
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
+        with:
+          python-version: "3.12"
+
+      - name: 파이썬·클로드 설치
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
+        run: |
+          pip install -q boto3 pynacl
+          npm install -g @anthropic-ai/claude-code
+
+      - name: AI 자동답변 한 바퀴 (PC 대신)
+        if: steps.hb.outputs.quiet >= 20 || inputs.force == true
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLOUDFLARE_ACCOUNT_ID_2: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_2 }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          SAJUARCADE_DIR: ${{ github.workspace }}/sajuarcade
+          HEARTBEAT_MAX_MIN: ${{ inputs.force == true && '0' || '20' }}
+        run: python 작업/AI자동답변6시간.py

@@ -82,7 +82,9 @@ HOT_DAYS = 2                    # 최근 이틀 글은 매 바퀴, 나머지는 
 MIN_LEN = 3                     # 이 글자 수 이하는 무시
 MINOR_BORN = 2008               # 이 해 이후 출생 = 안 봄 (만 14세 미만 보호)
 REPORT_EVERY_HOURS = 6          # 몇 시간마다 한눈 요약을 텔레그램으로 보낼지 (00·06·12·18시)
-MODEL_EXTRACT = "haiku"         # 분류·추출용 (기계적인 일이라 싼 모델)
+MODEL_EXTRACT = "sonnet"        # 2026-09-24 사장님 지시로 haiku → sonnet.
+# 실측: haiku 가 출력 4,233 토큰을 토해서 값이 sonnet($0.0297)과 거의 같았다($0.0246).
+# 분류만 하는데 싼 모델 값이 안 싸면 쓸 이유가 없다.
 MODEL_WRITE = "sonnet"          # 풀이 작성용
 
 # 풀이를 허용하면서(2026-09-21) 법적 금지어는 그대로 둔다.
@@ -365,6 +367,18 @@ def claude(prompt, schema, model, sys_prompt, timeout=240):
         outer = json.loads(r.stdout)
     except Exception:
         return {"__오류__": "claude 출력이 JSON 아님"}
+    # 토큰·값 기록 (2026-09-24). is_error 검사 **앞**에 둔다 — 실패한 호출도 토큰은 나가니까.
+    # 통째로 try 라 여기서 뭐가 터져도 답글 흐름은 안 멈춘다.
+    try:
+        _u = outer.get("usage") or {}
+        runlog("토큰 %s 입력%s 생성%s 읽기%s 출력%s $%.4f" % (
+            model, _u.get("input_tokens", 0),
+            _u.get("cache_creation_input_tokens", 0),
+            _u.get("cache_read_input_tokens", 0),
+            _u.get("output_tokens", 0),
+            float(outer.get("total_cost_usd") or 0)))
+    except Exception:
+        pass
     if outer.get("is_error"):
         msg = str(outer.get("result"))
         # 로그인 만료는 사장님이 손을 써야 풀린다(터미널에서 claude → /login).
