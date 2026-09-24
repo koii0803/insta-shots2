@@ -679,6 +679,53 @@ def publish_fb(item, save):
     return r.get("post_id") or vid
 
 
+# ── 영상 자동 삭제 (2026-09-25 사장님 "하루 뒤에 자동 삭제되지?") ──
+# 전에는 PC 가 다음 편을 만들 때만 R2 영상을 지웠다(upload_instagram.cleanup). PC 가 안 돌면 영영 안 지워졌다.
+# 이제 액션이 회차마다 본다: 인스타 게시 20시간 뒤(스레드·페북·유튜브가 아직 대기면 48시간까지 둔다) R2 에서 지운다.
+# 예약표 줄은 안 지운다 — PC 가 유튜브 주소를 되받아 기록에 옮겨야 해서. "영상삭제" 표시만 남기고 PC 정리가 줄을 뺀다.
+CLEANUP_AFTER_H, CLEANUP_MAX_H = 20, 48
+R2_VIDEO_PREFIX = "saju-shorts/"          # = PC upload_instagram.R2_PREFIX. 이 밖은 절대 안 지운다
+
+
+def cleanup_videos(q, t, save):
+    창고 = 쇼츠창고.열기()
+    gone = 0
+    for it in q:
+        if it.get("영상삭제") or not it.get("video_url"):
+            continue
+        key = it.get("key") or (R2_VIDEO_PREFIX + it["id"] + ".mp4")
+        if not key.startswith(R2_VIDEO_PREFIX):
+            continue
+        if it.get("status") == "게시" and it.get("posted_at"):
+            base = it["posted_at"]
+        elif it.get("status") in ("없음", None) and it.get("fb_status") == "게시" and it.get("fb_posted_at"):
+            base = it["fb_posted_at"]
+        else:
+            continue
+        try:
+            age_h = (t - parse(base)).total_seconds() / 3600
+        except Exception:
+            continue
+        if age_h < CLEANUP_AFTER_H:
+            continue
+        if age_h < CLEANUP_MAX_H and "대기" in (it.get("threads_status"), it.get("fb_status"), it.get("youtube_status")):
+            continue                                   # 아직 올릴 데가 남았다. 하루 더 둔다
+        if DRY:
+            print("  [dry-run] 영상 삭제 대상: %s (%s, %.0f시간)" % (it["id"], key, age_h))
+            continue
+        try:
+            창고.s3.delete_object(Bucket=창고.bucket, Key=key)
+        except Exception as e:
+            log(LOG_ERR, "%s %s 영상 삭제 실패 (다음 회차에 다시): %s" % (stamp(), it["id"], str(e)[:120]))
+            continue
+        it["영상삭제"] = stamp()
+        log(LOG_OK, "%s %s 영상 삭제 (게시 %.0f시간 뒤) %s" % (stamp(), it["id"], age_h, key))
+        gone += 1
+        save()
+    if gone:
+        print("영상 %d개 지움" % gone)
+
+
 def handle_error(it, e, tgt, save):
     """오류 종류별 처리. tgt = 'ig' | 'th'. 인증 오류면 True(이 대상 나머지 건 중단)"""
     if tgt == "ig":
@@ -784,6 +831,7 @@ def _main(창고):
 
     retry_th = [it for it in q if it.get("threads_status") == "게시" and not it.get("threads_reply_id") and it.get("threads_reply_error")
                 and it.get("threads_reply_attempts", 0) < MAX_ATTEMPTS] if th_ok else []
+    cleanup_videos(q, t, save)                  # 게시 20시간 지난 영상은 여기서 지운다 (PC 안 켜도)
     if not due_ig and not due_th and not due_fb and not due_yt and not retry_th:
         print("할 일 없음 (%s)" % t.strftime("%Y-%m-%d %H:%M"))
         return 0
