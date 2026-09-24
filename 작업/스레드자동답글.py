@@ -394,6 +394,11 @@ EXTRACT_SCHEMA = {
         "calendar": {"type": "string", "enum": ["solar", "lunar", ""]},
         "worry": {"type": "string"},
         "minor": {"type": "boolean"},
+        # 두 사람 사주를 같이 준 경우(재회·궁합). 있으면 둘 다 풀어 준다 (2026-09-24)
+        "year2": {"type": "integer"}, "month2": {"type": "integer"}, "day2": {"type": "integer"},
+        "hour2": {"type": "integer"}, "minute2": {"type": "integer"},
+        "gender2": {"type": "string", "enum": ["M", "F", ""]},
+        "calendar2": {"type": "string", "enum": ["solar", "lunar", ""]},
     },
     "required": ["label", "confidence", "reason", "year", "month", "day", "hour", "minute", "gender", "calendar", "worry", "minor"],
 }
@@ -434,6 +439,11 @@ EXTRACT_PROMPT = """스레드 계정 @paljaoppa(팔자오빠)에 달린 댓글�
   "여자에요", "내가 여자", "남임", "남자야" 도 전부 잡는다.
   **대화 줄기 어디에든 한 번이라도 나왔으면 그 값을 쓴다.**
 - calendar: 음력이라고 적혀 있으면 lunar, 아니면 solar.
+- **★ 사주를 두 사람 것 주면(재회·궁합) 두 번째 사람을 year2~calendar2 에 넣어라.**
+  (예: "891018 신시 양력 남 900402 묘시 양력 여 재회가능할지"
+   → 첫째 1989-10-18 16시 M, 둘째 1990-04-02 6시 F)
+  **누가 본인인지 고르지 마라.** 앞에 적은 사람을 첫째로 둔다. 둘 다 풀어 줄 것이다.
+  한 사람만 있으면 year2 는 0 으로 둔다.
 - 없는 값은 year/month/day 는 0, hour/minute 는 -1 로 둔다. **추측해서 채우지 마라.**
 - worry: 뭘 물었는지 짧게(한국어) (직장운, 재물운, 결혼, 이직, 없으면 빈 문자열).
 - **minor: 이 사람이 미성년으로 보이면 true.** 생년이 없어도 말로 드러나면 true 다.
@@ -701,8 +711,38 @@ def promo_done(chain):
     return any(line.startswith("나: ") and any(w in line for w in PROMO_WORDS) for line in chain)
 
 
+def 사람표(y, m, d, hh, gender):
+    """두 사람일 때 부르는 이름. "89년 10월 18일 신시생 남자" 꼴.
+
+    섞여 담겨도 손님이 자기 생일을 보면 바로 안다 (2026-09-24 사장님 지시).
+    시각을 모르면 시각을 빼고, 성별을 모르면 성별을 뺀다.
+    """
+    시 = ""
+    if hh is not None and hh >= 0:
+        지 = [k for k, v in BRANCH_HOUR.items() if abs(((hh - v) % 24 + 12) % 24 - 12) <= 1]
+        시 = " " + (지[0] + "시") if 지 else " %d시" % hh
+    성 = {"M": " 남자", "F": " 여자"}.get(gender or "", "")
+    return "%d년 %d월 %d일%s생%s" % (y, m, d, 시, 성)
+
+
+def 두사람표(row, facts):
+    """엔진 표를 프롬프트에 넣을 글자로. 두 사람이면 둘을 이름표 붙여 나란히 놓는다 (2026-09-24).
+
+    **누가 본인인지 고르지 않는다.** 고르면 틀리고, 틀리면 "내가 여자인데요" 소리를 듣는다.
+    """
+    if not facts:
+        return "(생년월일을 안 줘서 사주를 못 뽑았다. 사주 얘기는 하지 말고, 생년월일을 청해라.)"
+    if not row.get("facts2"):
+        return json.dumps(facts, ensure_ascii=False, indent=1)
+    return ("**두 사람 사주를 줬다. 둘 다 풀어 준다. 누가 본인인지 고르지 마라.**\n\n"
+            "[첫째 — %s]\n%s\n\n[둘째 — %s]\n%s"
+            % (row.get("who1", "앞에 적은 사람"), json.dumps(facts, ensure_ascii=False, indent=1),
+               row.get("who2", "뒤에 적은 사람"), json.dumps(row["facts2"], ensure_ascii=False, indent=1)))
+
+
 def write_reply(row, facts, missing, turn, fix=""):
     done = promo_done(row["chain"])
+    두사람 = bool(row.get("facts2"))
     if missing:
         guide = TURN_GUIDE["빠짐"]
     elif turn >= PROMO_TURN and not done:
@@ -713,13 +753,24 @@ def write_reply(row, facts, missing, turn, fix=""):
     if done:
         guide += ("\n   **이 대화에서는 이미 스하리·프로필을 청했다. 다시 청하지 마라.**"
                   " 스하리·스크랩·하트·리포스트·팔로우·복채·프로필 이라는 말을 아예 쓰지 마라.")
+    if 두사람:
+        guide = ("**사주를 두 사람 것 줬다(재회·궁합을 묻는 것이다). 둘 다 풀어 준다.**\n"
+                 "   · 누가 본인인지 **고르지 마라.** 고르면 틀린다. 틀리면 '내가 여자인데요' 소리를 듣는다\n"
+                 "   · **각 사람을 처음 부를 때 표에 적힌 이름표를 글자 그대로 한 번씩 쓴다.**\n"
+                 "     (예: '89년 10월 18일 신시생 남자 쪽은 ~', '90년 4월 2일 묘시생 여자 쪽은 ~')\n"
+                 "     날짜를 적어야 **혹시 내가 둘을 바꿔 읽었어도 손님이 바로 알아챈다.** 줄이거나 바꾸지 마라.\n"
+                 "     두 번째부터는 '89년생 쪽' 처럼 짧게 불러도 된다. '너'·'상대'라고는 하지 마라\n"
+                 "   · 한 사람에 두세 줄씩. 그 다음 **둘 사이에 뭐가 걸려 있는지** 한 덩어리로 (충·합·원진)\n"
+                 "   · 짧게 써라. 두 사람이라 길어지기 쉬운데 **450자를 넘기면 안 된다**\n"
+                 "   · 빠진 정보(시각·성별)를 먼저 청하지 마라. 있는 걸로 먼저 풀어 주고 궁금한 걸 마지막에 묻는다\n"
+                 "   · 마지막은 질문으로 끝낸다.\n") + guide
     return claude(WRITE_PROMPT.format(
         post=(row["post"].get("text") or "")[:400],
         chain="\n".join(row["chain"]) or "(없음)",
         user=row["reply"].get("username"),
         text=(row["reply"].get("text") or "")[:500],
         worry=row.get("worry") or "안 적음",
-        facts=json.dumps(facts, ensure_ascii=False, indent=1) if facts else "(생년월일을 안 줘서 사주를 못 뽑았다. 사주 얘기는 하지 말고, 생년월일을 청해라.)",
+        facts=두사람표(row, facts),
         missing=", ".join(missing) if missing else "없음",
         turn=turn, turn_guide=guide, tone=tone_for(turn),
         fix=("\n## 다시 쓴다\n앞서 쓴 글이 이래서 반려됐다: **%s**\n같은 내용으로 그 부분만 고쳐서 다시 써라.\n" % fix) if fix else "",
@@ -743,6 +794,10 @@ def reply_ok(text, need_question=False, no_promo=False):
     """올려도 되는 글인지. 법적 금지어는 그대로 막는다."""
     if not text or len(text) > 500:
         return "길이(%d)" % len(text or "")
+    # 클로드가 딸꾹질하면 "test reply" 같은 껍데기를 뱉는다. 2026-09-23 그게 손님 댓글에 그대로 나갔다.
+    # 한 줄이면 아래에서 걸리지만 **여러 줄짜리 껍데기**는 안 걸린다 → 한글 글자 수로 본다.
+    if len(re.findall(r"[가-힣]", text)) < 80:
+        return "껍데기 글(한글 %d자)" % len(re.findall(r"[가-힣]", text))
     if len([l for l in text.splitlines() if l.strip()]) < 2:
         return "한 줄짜리"
     if need_question and not text.rstrip().endswith("?"):
@@ -792,6 +847,27 @@ def handle(row, dry=False):
             missing.append("성별 (대운을 못 봄)")
         if hh is None or hh < 0:
             missing.append("태어난 시각")
+        # ── 두 사람 사주를 줬으면 둘째도 뽑는다 (2026-09-24 사장님 지시 "둘 다 풀어준다").
+        # 전에는 앞의 것만 풀었다가 "내가 여자인데요" 소리를 들었다. 누구 건지 고르지 않는 게 답이다.
+        y2 = int(ex.get("year2") or 0)
+        if (y2, int(ex.get("month2") or 0), int(ex.get("day2") or 0)) == (y, m, d):
+            y2 = 0                    # 같은 사람을 둘로 잘못 뽑은 것 — 한 사람으로 본다
+        if y2 and int(ex.get("month2") or 0) and int(ex.get("day2") or 0):
+            if y2 >= MINOR_BORN:
+                return "미성년", conf, "둘째가 %d년생 — 안 봄" % y2, None, "미성년(둘째 %d년생)" % y2
+            try:
+                j2 = engine_facts(y2, int(ex["month2"]), int(ex["day2"]),
+                                  int(ex.get("hour2", -1)), int(ex.get("minute2", -1)),
+                                  ex.get("gender2") or "", ex.get("calendar2") or "solar")
+                row["facts2"] = facts_digest(j2, (ex.get("gender2") or "") in ("M", "F"))
+                # 이름표에 **생년월일·시각을 통째로** 넣는다 (2026-09-24 사장님 지시).
+                # AI 가 두 사람 것을 섞어 담아도 검사로는 못 잡는다 — 손님이 자기 생일을 보면 바로 안다.
+                row["who1"] = 사람표(y, m, d, hh, gender)
+                row["who2"] = 사람표(y2, int(ex["month2"]), int(ex["day2"]),
+                                   int(ex.get("hour2", -1)), ex.get("gender2"))
+                missing = []          # 둘 다 풀 때는 빠진 것부터 청하지 않는다. 있는 걸로 먼저 풀어 준다
+            except Exception as e:
+                log_err("둘째 사주 엔진 실패(첫째만 풀이): %s" % str(e)[:120])
     elif y:
         missing.append("양력 월·일 (일주가 안 나와서 재물·배우자 자리를 못 봄)")
     # 생년 자체가 없으면 facts 없이 일반 답글 (사주 얘기 안 함)
