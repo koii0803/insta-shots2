@@ -42,7 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))                    # 쇼츠저
 STORE = os.path.dirname(HERE)                                        # 쇼츠저장소
 ARCADE = os.path.join(os.path.dirname(os.path.dirname(STORE)), "saju-arcade")   # PC 에만 있음(표 새로 받을 때)
 CACHE = os.path.join(HERE, "띠년생_%d.json")
-RECORD = os.path.join(STORE, "스레드글기록.jsonl")     # 예약표에 들어간 글. 중복 검사용 (PC·액션 공용)
+RECORD = "스레드글기록.jsonl"                          # 예약표에 들어간 글. 중복 검사용 (PC·액션 공용). R2 창고 shorts/ (2026-09-25)
 BASE_YEAR = 2026
 TEXT_MAX = 500
 RECENT = 30                      # 최근 이 개수와 띠+훅이 겹치면 다시 뽑음
@@ -240,15 +240,17 @@ def check(text):
 
 
 def load_record():
-    if not os.path.exists(RECORD):
-        return []
-    with open(RECORD, encoding="utf-8") as f:
-        return [json.loads(l) for l in f if l.strip()]
+    import 쇼츠창고
+    return 쇼츠창고.열기().줄들(RECORD)
+
+
+def add_record_row(row):
+    import 쇼츠창고
+    쇼츠창고.열기().붙이기(RECORD, json.dumps(row, ensure_ascii=False))
 
 
 def add_record(entry_id, animal, hook, text, theme="흐름"):
-    with open(RECORD, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "id": entry_id, "띠": animal, "훅": hook, "주제": theme, "text": text}, ensure_ascii=False) + "\n")
+    add_record_row({"날짜": datetime.now().strftime("%Y-%m-%d %H:%M"), "id": entry_id, "띠": animal, "훅": hook, "주제": theme, "text": text})
 
 
 

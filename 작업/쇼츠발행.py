@@ -30,6 +30,7 @@
              fb_caption, fb_status, fb_video_id, fb_post_id, fb_posted_at, fb_attempts, fb_error
 영상 삭제는 PC 쪽 upload_instagram.py --cleanup 이 R2에서 한다(인스타 게시 20시간 뒤. 스레드·페북이 아직 대기면 48시간까지).
 로컬 시험: python 작업/쇼츠발행.py --dry-run  (토큰 없어도 됨. 아무것도 안 바꿈)
+2026-09-25: 예약표·발행기록·오류기록은 깃허브 파일이 아니라 **R2 창고(shorts/, 쇼츠창고.py)** 다. 커밋 없음. PC 와 같은 것을 본다.
 """
 import os
 import re
@@ -43,9 +44,10 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
-QUEUE = ROOT / "쇼츠예약.json"
-LOG_OK = ROOT / "발행기록.txt"
-LOG_ERR = ROOT / "오류기록.txt"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import 쇼츠창고                    # 예약표·기록은 전부 R2 창고 shorts/ (2026-09-25 사장님 지시). 깃허브엔 안 남긴다
+LOG_OK = "발행기록.txt"
+LOG_ERR = "오류기록.txt"
 IG_USER_ID = os.environ.get("IG_USER_ID", "").strip()
 VAULT_KEY = os.environ.get("IG_ACCESS_TOKEN", "").strip()   # 금고 열쇠(만료 없는 페이지 토큰). 게시에는 안 쓴다
 IG_TOKEN = ""                                                 # 게시용 60일 인스타 토큰. 금고에서 꺼낸다
@@ -115,7 +117,7 @@ def spread(q, t, due, tgt, save):
 
 # ── 예약표 점검: 하루에 영상이 MAX_VIDEOS_PER_DAY 넘게 잡혀 있으면 알린다 (2026-09-22 사고: 낮에 3편). 막지는 않는다(PC schedule.py 가 막는다) ──
 MAX_VIDEOS_PER_DAY = 2                     # = PC schedule.py SLOTS 개수(낮·밤)
-PILEUP_LOG = ROOT / "몰림경고.json"         # {날짜: 개수} 같은 날·같은 개수는 한 번만 알린다
+PILEUP_LOG = "몰림경고.json"                # {날짜: 개수} 같은 날·같은 개수는 한 번만 알린다 (창고)
 
 
 def warn_pileup(q, t):
@@ -131,7 +133,7 @@ def warn_pileup(q, t):
     if not bad:
         return
     try:
-        seen = json.loads(PILEUP_LOG.read_text(encoding="utf-8")) if PILEUP_LOG.exists() else {}
+        seen = 쇼츠창고.열기().읽기(PILEUP_LOG) or {}
     except Exception:
         seen = {}
     for d, ids in sorted(bad.items()):
@@ -142,14 +144,14 @@ def warn_pileup(q, t):
         tg_send("⚠ " + line + "\n\nPC 에서 python schedule.py list 로 보고 python schedule.py move 로 옮겨")
         seen[d] = len(ids)
     if not DRY:
-        PILEUP_LOG.write_text(json.dumps(seen, ensure_ascii=False, indent=1), encoding="utf-8")
+        쇼츠창고.열기().쓰기(PILEUP_LOG, seen)
 
 
 POLL_SEC, POLL_MAX = 10, 30          # 10초 × 30 = 5분
 THREADS_TEXT_MAX = 500
 THREADS_REPLY = "사람이 봐주는 데 아님. 사주 달력표 그대로 뽑아주는 곳. 네 년생 30초, 링크 ↓" + "\n" + "https://sajuarcade.com"   # = PC config.THREADS_REPLY
 REPLY_EVERY_DAYS = 5                                  # 링크 답글은 5일에 1회 (2026-09-19 사장님 지시 "웹사이트 댓글 5일에 1회"). 나머지 글은 본문만
-REPLY_LOG = ROOT / "스레드링크기록.json"               # {"last": "YYYY-MM-DD HH:MM"} 마지막으로 링크 답글 단 시각
+REPLY_LOG = "스레드링크기록.json"                      # {"last": "YYYY-MM-DD HH:MM"} 마지막으로 링크 답글 단 시각 (창고)
 
 AUTH_CODES = {190, 102, 10} | set(range(200, 300))
 RATE_CODES = {4, 17, 32, 613}
@@ -176,8 +178,7 @@ def parse(t):
 def log(path, line):
     print(line)
     if not DRY:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        쇼츠창고.열기().붙이기(path, line)
 
 
 class GraphError(Exception):
@@ -577,7 +578,7 @@ def publish_th(item, save):
 def reply_due():
     """마지막 링크 답글 뒤 REPLY_EVERY_DAYS 일이 지났나. 기록 없으면 True."""
     try:
-        last = json.loads(REPLY_LOG.read_text(encoding="utf-8")).get("last")
+        last = (쇼츠창고.열기().읽기(REPLY_LOG) or {}).get("last")
         if last:
             dt = datetime.strptime(last, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
             return datetime.now(KST) - dt >= timedelta(days=REPLY_EVERY_DAYS)
@@ -589,7 +590,7 @@ def reply_due():
 def mark_reply():
     if DRY:
         return
-    REPLY_LOG.write_text(json.dumps({"last": stamp()}, ensure_ascii=False), encoding="utf-8")
+    쇼츠창고.열기().쓰기(REPLY_LOG, {"last": stamp()})
 
 
 def reply_th(item, mid):
@@ -712,17 +713,30 @@ def handle_error(it, e, tgt, save):
 
 
 def main():
-    if not QUEUE.exists():
-        print("예약표 없음")
+    # 예약표는 R2 창고. **발행하는 동안 내내 잠근다** — PC 가 그 사이 등록하면 서로 덮어쓴다 (2026-09-25)
+    창고 = 쇼츠창고.열기()
+    if not DRY and not 창고.잠금_잡기("깃허브-발행", 기다림초=60):
+        print("PC 가 예약표를 고치는 중이라 이번 회차는 쉰다 (다음 회차에)")
         return 0
-    q = json.loads(QUEUE.read_text(encoding="utf-8"))
+    try:
+        return _main(창고)
+    finally:
+        if not DRY:
+            창고.잠금_풀기()
+
+
+def _main(창고):
+    q = 창고.예약표읽기()
+    if not q:
+        print("예약표 비어 있음")
+        return 0
     t = now()
     warn_pileup(q, t)
     due_ig = [it for it in q if it.get("status", "대기") == "대기" and parse(it["publish_at"]) <= t]
 
     def save():
         if not DRY:
-            QUEUE.write_text(json.dumps(q, ensure_ascii=False, indent=1), encoding="utf-8")
+            창고.예약표쓰기(q)
 
     if DRY:
         print("[dry-run] 아무것도 바꾸지 않음")

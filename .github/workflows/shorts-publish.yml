@@ -1,7 +1,9 @@
-# 인스타 릴스 예약발행 — 깨어날 때마다 쇼츠예약.json 의 시간 지난 건을 메타 그래프 API로 직접 게시한다(Make 없음). 영상 삭제는 PC 쪽.
-# PC 가 꺼져 있어도 돈다. 토큰은 저장소 Settings → Secrets and variables → Actions → IG_USER_ID, IG_ACCESS_TOKEN 에 등록.
-# 깨우는 것: 30분마다 cron(2026-09-18 스레드 글 시각 맞추려고. 깃허브가 수십 분~몇 시간 미룸) + workflow_dispatch(Cloudflare Worker 가 10분마다 부름, PC에서 손으로도 됨).
-# 토큰이 죽었으면 스크립트가 종료코드 1 → 이 워크플로 실패 → 깃허브가 이메일로 알린다. 결과 커밋은 실패해도 한다(if: always).
+# 인스타 릴스·스레드·페북·유튜브 예약발행 — 깨어날 때마다 R2 창고(shorts/예약표.json)의 시간 지난 건을 API 로 직접 게시한다.
+# 2026-09-25: 예약표·발행기록·오류기록이 **깃허브 파일에서 R2 창고로** 갔다 (사장님 지시 "기록은 깃허브에 안 올린다").
+#   → 결과 커밋 없음. PC 와 액션이 같은 창고를 본다. 발행하는 동안 창고 잠금을 잡아 PC 등록과 안 겹친다. 작업/쇼츠창고.py
+# PC 가 꺼져 있어도 돈다. 토큰은 Secrets(IG_USER_ID, IG_ACCESS_TOKEN) + 금고(토큰.enc). R2 는 Secrets 넷.
+# 깨우는 것: 30분마다 cron(깃허브가 수십 분~몇 시간 미룸) + workflow_dispatch(Cloudflare Worker shorts-wake 가 10분마다, PC 깃허브깨우기.ps1 도).
+# 토큰이 죽었으면 스크립트가 종료코드 1 → 이 워크플로 실패 → 깃허브가 이메일로 알린다.
 name: shorts-publish
 on:
   schedule:
@@ -16,29 +18,18 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      - run: pip install -q pynacl
+      - run: pip install -q pynacl boto3
       - name: 토큰 검사·예약 확인·발행
         env:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}    # 하루 넘게 밀린 건 보류하고 알린다 (2026-09-22)
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CLOUDFLARE_ACCOUNT_ID_2: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_2 }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: python 작업/쇼츠발행.py
-      - name: 결과 커밋
-        if: always()
-        run: |
-          git config user.name "shorts-publish"
-          git config user.email "actions@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet && exit 0
-          git commit -m "인스타 예약발행 실행"
-          # 예약표는 id 단위로 합친다(작업/예약표합치기.py, .gitattributes merge=queue) — 글자 충돌로 결과 커밋을 잃고 같은 영상이 또 올라가는 일 방지 (2026-09-22)
-          git config merge.queue.driver "python 작업/예약표합치기.py %O %A %B"
-          for i in 1 2 3; do
-            git pull --rebase && git push && exit 0
-            echo "푸시 실패, 다시 ($i/3)"; sleep 5
-          done
-          exit 1

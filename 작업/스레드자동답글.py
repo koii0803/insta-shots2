@@ -1208,7 +1208,12 @@ def save_score(acc, posts):
 def posts_today():
     """오늘 올라간 스레드 **글**(답글 아님) 수. 예약표에서 센다."""
     key = now().strftime("%Y-%m-%d")
-    q = jload(REPO / "쇼츠예약.json", [])       # 저장소 파일. 깃허브에선 체크아웃한 것, PC 에선 로컬 클론
+    try:
+        import 쇼츠창고
+        q = 쇼츠창고.열기().예약표읽기()        # R2 창고 shorts/ (2026-09-25). 저장소엔 이제 예약표가 없다
+    except Exception as e:
+        print("예약표를 못 읽음(%s) → 오늘 글 수는 0으로" % type(e).__name__)
+        q = []
     out = {}
     for x in q:
         if (x.get("publish_at") or "").startswith(key) and x.get("threads_text") and x.get("threads_status") == "게시":

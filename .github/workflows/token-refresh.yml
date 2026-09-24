@@ -1,6 +1,7 @@
 # 60일 토큰 자동 갱신 — 매주 월요일 03:00 KST(일요일 18:00 UTC). 사용자가 손댈 일 없음. PAT 없음.
 # 금고(토큰.enc)를 Secrets 의 IG_ACCESS_TOKEN 으로 열어 60일 토큰을 새 60일로 연장하고 다시 잠가 커밋한다.
 # 실패하면 금고는 그대로 두고 이 워크플로가 빨강 → 깃허브가 이메일로 알린다. 그때 PC 에서 python ig_token.py 로 금고를 다시 만든다.
+# 2026-09-25: 토큰상태.json 은 R2 창고로 갔다. 깃에 커밋하는 건 **금고(토큰.enc) 하나**뿐이다.
 name: token-refresh
 on:
   schedule:
@@ -18,21 +19,23 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - run: pip install -q pynacl
+      - run: pip install -q pynacl boto3
       - name: 60일 토큰 연장
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID_2: ${{ secrets.CLOUDFLARE_ACCOUNT_ID_2 }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: python 작업/토큰갱신.py
-      - name: 금고 커밋
+      - name: 금고 커밋 (토큰.enc 만)
         if: always()
         run: |
           git config user.name "token-refresh"
           git config user.email "actions@users.noreply.github.com"
-          git add -A
+          git add 토큰.enc
           git diff --cached --quiet && exit 0
           git commit -m "60일 토큰 갱신"
-          # 예약표는 id 단위로 합친다(작업/예약표합치기.py, .gitattributes merge=queue) — 글자 충돌로 결과 커밋을 잃고 같은 영상이 또 올라가는 일 방지 (2026-09-22)
-          git config merge.queue.driver "python 작업/예약표합치기.py %O %A %B"
           for i in 1 2 3; do
             git pull --rebase && git push && exit 0
             echo "푸시 실패, 다시 ($i/3)"; sleep 5

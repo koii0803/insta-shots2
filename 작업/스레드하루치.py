@@ -32,10 +32,10 @@ import 스레드글
 import 일진글          # 일상 자리 하나는 오늘 일진 글 (2026-09-19 사장님 지시)
 
 ROOT = Path(__file__).resolve().parent.parent
-QUEUE = ROOT / "쇼츠예약.json"
-LOG_ERR = ROOT / "오류기록.txt"
-DONE = ROOT / "스레드하루치기록.json"
-TOPICS = ROOT / "스레드소재.txt"          # 사람 글 소재. 한 줄에 하나, 위에서부터 쓰고 지운다. 실제 있었던 일만
+import 쇼츠창고                    # 예약표·기록·소재는 전부 R2 창고 shorts/ (2026-09-25). 깃허브엔 안 남긴다
+LOG_ERR = "오류기록.txt"
+DONE = "스레드하루치기록.json"
+TOPICS = "스레드소재.txt"          # 사람 글 소재. 한 줄에 하나, 위에서부터 쓰고 지운다. 넣기: python 쇼츠창고.py --소재 "한 줄"
 KST = ZoneInfo("Asia/Seoul")
 DRY = "--dry-run" in sys.argv
 # 글 쓰는 AI = 클로드 (2026-09-23 사장님 지시 "제미나이 근처도 가지 마").
@@ -133,8 +133,7 @@ def stamp():
 def log_err(line):
     print(line)
     if not DRY:
-        with open(LOG_ERR, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        쇼츠창고.열기().붙이기(LOG_ERR, line)
 
 
 def claude(prompt):
@@ -278,25 +277,24 @@ def slot_name(at):
 
 def pop_topic():
     """스레드소재.txt 첫 줄을 꺼내고(파일에서 지움) 돌려준다. 없으면 None."""
-    if not TOPICS.exists():
-        return None
-    raw = TOPICS.read_text(encoding="utf-8-sig").splitlines()
+    raw = (쇼츠창고.열기().글읽기(TOPICS, "") or "").splitlines()
     lines = [l.strip() for l in raw if l.strip() and not l.strip().startswith("#")]
     if not lines:
         return None
     if not DRY:
         rest = [l for l in raw if l.strip() != lines[0]]
-        TOPICS.write_text("\n".join(rest).rstrip("\n") + "\n", encoding="utf-8")
+        쇼츠창고.열기().글쓰기(TOPICS, chr(10).join(rest).rstrip(chr(10)) + chr(10))
     return lines[0]
 
 
 def main():
     day = sys.argv[sys.argv.index("--day") + 1] if "--day" in sys.argv else now().strftime("%Y-%m-%d")
-    done = json.loads(DONE.read_text(encoding="utf-8")) if DONE.exists() else {}
+    창고 = 쇼츠창고.열기()
+    done = 창고.읽기(DONE) or {}
     if done.get("날짜") == day and not DRY:
         print("오늘(%s) 이미 만들었음 (%s). 끝" % (day, done.get("결과")))
         return 0
-    q = json.loads(QUEUE.read_text(encoding="utf-8")) if QUEUE.exists() else []
+    q = 창고.예약표읽기()
     # 오늘 스레드에 실제로 나갈(나간) 건만 센다. 페북 전용 건(threads_status "없음")·실패 건을 띠 글로 세면 그만큼 덜 만들어 하루가 빈다 (2026-09-22)
     today = [it for it in q if it.get("publish_at", "").startswith(day)
              and (it.get("threads_status") in ("대기", "게시") or (it.get("threads_text") and not it.get("threads_status")))]
@@ -319,7 +317,7 @@ def main():
     weather = weather_today() if any(s["kind"] == "일상" for s in plan) else None
     used_axes = []                                  # 오늘 이미 쓴 소재축
     used_symptoms = []                              # 오늘 이미 쓴 증상축
-    made, skipped = [], []
+    made, skipped, 새건 = [], [], []
     for slot in plan:
         kind, at = slot["kind"], slot["at"]
         if have.get(kind, 0) > 0:
@@ -393,20 +391,24 @@ def main():
         q = [x for x in q if x.get("id") != vid]
         q.append(entry)
         made.append(vid)
+        새건.append(entry)
         if not DRY:
-            with open(스레드글.RECORD, "a", encoding="utf-8") as f:
-                rec_row = {"날짜": stamp(), "id": vid, "종류": kind, "띠": animal, "훅": hook, "text": text}
-                if kind == "띠":
-                    rec_row["주제"] = theme
-                if kind == "증상":
-                    rec_row.update(sym_meta)       # 기준·글꼴도 남겨야 다음에 안 겹친다
-                f.write(json.dumps(rec_row, ensure_ascii=False) + "\n")
+            rec_row = {"날짜": stamp(), "id": vid, "종류": kind, "띠": animal, "훅": hook, "text": text}
+            if kind == "띠":
+                rec_row["주제"] = theme
+            if kind == "증상":
+                rec_row.update(sym_meta)       # 기준·글꼴도 남겨야 다음에 안 겹친다
+            스레드글.add_record_row(rec_row)
     if DRY:
         print("[dry-run] 아무것도 안 바꿈. 만들 것 %d개, 건너뜀 %s" % (len(made), skipped))
         return 0
     if made:
-        QUEUE.write_text(json.dumps(q, ensure_ascii=False, indent=1), encoding="utf-8")
-    DONE.write_text(json.dumps({"날짜": day, "결과": "만듦 %d개 %s / 건너뜀 %s" % (len(made), made, skipped), "때": stamp()}, ensure_ascii=False, indent=1), encoding="utf-8")
+        # 글 만드는 데 몇 분 걸리니 잠금은 **넣을 때만** 잡는다. 그 사이 바뀐 예약표 위에 얹는다
+        새아이디 = {e["id"] for e in 새건}
+        if not 쇼츠창고.예약표고치기(lambda 표: [x for x in 표 if x.get("id") not in 새아이디] + 새건, "깃허브-하루치"):
+            log_err("%s 스레드 하루치: 예약표가 잠겨 있어 못 넣었다 (%s). 다음 실행에 다시" % (stamp(), made))
+            return 1
+    창고.쓰기(DONE, {"날짜": day, "결과": "만듦 %d개 %s / 건너뜀 %s" % (len(made), made, skipped), "때": stamp()})
     print("끝. 만듦 %d개, 건너뜀 %s" % (len(made), skipped))
     return 0
 

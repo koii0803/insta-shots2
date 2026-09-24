@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import 금고
 
 ROOT = Path(__file__).resolve().parent.parent
-STATE = ROOT / "토큰상태.json"
+import 쇼츠창고                    # 토큰상태.json 은 R2 창고 (2026-09-25). 금고(토큰.enc)만 깃에 남는다
+STATE = "토큰상태.json"
 GRAPH = "https://graph.facebook.com/v26.0/"
 KST = ZoneInfo("Asia/Seoul")
 APP_ID = "1731062281302338"
@@ -180,9 +181,9 @@ def main():
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
     v.update({"user_token": new, "expires_at": exp, "updated": now})
     금고.save(KEY, v)
-    STATE.write_text(json.dumps({"갱신": now, "만료": kst(exp), "data_access": kst(d.get("data_access_expires_at")),
-                                 "인스타": "@" + IG_USERNAME, "스레드": th_state, "카카오": kk_state, "유튜브": yt_state}, ensure_ascii=False, indent=1), encoding="utf-8")
-    print("금고·토큰상태.json 갱신. 끝.")
+    쇼츠창고.열기().쓰기(STATE, {"갱신": now, "만료": kst(exp), "data_access": kst(d.get("data_access_expires_at")),
+                                 "인스타": "@" + IG_USERNAME, "스레드": th_state, "카카오": kk_state, "유튜브": yt_state})
+    print("금고 갱신·토큰상태(창고) 갱신. 끝.")
 
 
 if __name__ == "__main__":
