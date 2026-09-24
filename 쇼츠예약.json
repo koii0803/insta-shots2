@@ -334,7 +334,10 @@
   "threads_kind": "일진",
   "threads_text": "오늘 소 날. 양띠는 부딪히는 날이야\n계약, 말싸움, 큰 결정 내일로 미뤄\n오늘 이미 뭐 하나 틀어진 사람 있지?",
   "threads_entities": [],
-  "threads_status": "대기"
+  "threads_status": "게시",
+  "threads_container_id": "17910287352541214",
+  "threads_posted_at": "2026-09-24 18:00",
+  "threads_media_id": "18120801595910806"
  },
  {
   "id": "threads-띠-20260924-2326",
