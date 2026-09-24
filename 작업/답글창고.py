@@ -150,6 +150,26 @@ class 창고:
     def 기록_오늘(self):
         return self.읽기("기록/%s.json" % dt.datetime.now().strftime("%Y-%m-%d")) or []
 
+    def 보류_넣기(self, rid, row):
+        """본체가 "이건 내가 못 정하겠다" 한 댓글. 6시간마다 도는 AI자동답변이 꺼내 간다.
+
+        2026-09-24 사장님 지시로 **'무시' 라벨을 없앴다.** 전에는 분류기가 무시라고 하면
+        그대로 버리고 '답한 것'으로 찍었는데, 봇이 물어 놓고 그 답을 버리는 일이 열 건 났다
+        (@kmj241 '한텀걸리는 자리예요', @elegancejh '웅 있어....' 등).
+        이제 버리지 않고 여기 쌓아 둔다."""
+        cur = self.읽기("보류목록.json") or {}
+        cur[rid] = row
+        self.쓰기("보류목록.json", cur)
+
+    def 보류_목록(self):
+        return self.읽기("보류목록.json") or {}
+
+    def 보류_빼기(self, rids):
+        cur = self.읽기("보류목록.json") or {}
+        for r in rids:
+            cur.pop(r, None)
+        self.쓰기("보류목록.json", cur)
+
     def 토큰_적기(self, row):
         """AI 한 번 부를 때마다 토큰·값을 적는다 (2026-09-24 사장님 지시: 기록은 클라우드로).
 
