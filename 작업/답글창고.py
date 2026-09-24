@@ -29,6 +29,36 @@ from botocore.exceptions import ClientError
 
 PREFIX = "threads-reply/"
 DONE_KEEP_DAYS = 30        # 답한 것 기록은 이만큼만. 더 오래된 글은 어차피 안 본다(POST_AGE_DAYS 7)
+
+# ── 잠그기 (2026-09-25 사장님 지시 "구멍 막아") ──
+# 이 버킷은 r2.dev 공개 버킷이다. 주소만 알면 누구나 읽는다. 기록/날짜.json 엔 손님 생년월일이 있다.
+# 그래서 심장박동·잠금 빼고 전부 **암호로 잠가서** 올린다. 열쇠는 R2 비밀 열쇠에서 뽑는다
+# (PC 도 깃허브도 이미 갖고 있는 값이라 새 Secret 이 안 생긴다). 잠긴 파일은 "enc1:" 로 시작한다.
+# 안 잠긴 옛 파일도 읽힌다 (읽을 땐 둘 다, 쓸 땐 늘 잠근다). `python 답글창고.py --잠그기` 가 옛것을 한 번에 잠근다.
+암호화안함 = ("심장박동.json", "잠금.json")
+잠금표시 = "enc1:"
+
+
+def _열쇠():
+    import hashlib
+    비밀 = _env("R2_SECRET_ACCESS_KEY")
+    if not 비밀:
+        raise RuntimeError("R2_SECRET_ACCESS_KEY 가 없어서 창고 열쇠를 못 만든다")
+    return hashlib.sha256(("threads-reply|" + 비밀).encode("utf-8")).digest()
+
+
+def 잠그기(글):
+    import base64
+    from nacl.secret import SecretBox          # pynacl. 금고.py 와 같은 꾸러미
+    from nacl.utils import random as 난수
+    암호 = SecretBox(_열쇠()).encrypt(글.encode("utf-8"), 난수(SecretBox.NONCE_SIZE))
+    return 잠금표시 + base64.b64encode(bytes(암호)).decode("ascii")
+
+
+def 풀기(본문):
+    import base64
+    from nacl.secret import SecretBox
+    return SecretBox(_열쇠()).decrypt(base64.b64decode(본문[len(잠금표시):].strip())).decode("utf-8")
 LOG_KEEP_DAYS = 1          # 판단 기록(남의 생년월일)은 이만큼 지나면 지운다
 SCORE_KEEP_DAYS = 90       # 글 성적은 오래 둬도 개인정보가 없다
 
@@ -64,12 +94,25 @@ class 창고:
             if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
                 return default
             raise
-        return json.loads(body.decode("utf-8"))
+        글 = body.decode("utf-8")
+        if 글.startswith(잠금표시):
+            글 = 풀기(글)                    # 열쇠가 다르면 여기서 터진다. 조용히 빈 것으로 안 넘긴다
+        return json.loads(글)
 
     def 쓰기(self, name, data):
+        글 = json.dumps(data, ensure_ascii=False, indent=1)
+        올릴것 = 글 if name in 암호화안함 else 잠그기(글)
         self.s3.put_object(Bucket=self.bucket, Key=PREFIX + name,
-                           Body=json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8"),
-                           ContentType="application/json; charset=utf-8")
+                           Body=올릴것.encode("utf-8"),
+                           ContentType="text/plain; charset=utf-8")
+
+    def 잠겼나(self, name):
+        """(잠김, 없음, 열림)"""
+        try:
+            몸 = self.s3.get_object(Bucket=self.bucket, Key=PREFIX + name)["Body"].read(16)
+        except ClientError:
+            return "없음"
+        return "잠김" if 몸.startswith(잠금표시.encode()) else "열림"
 
     def 지우기(self, name):
         try:
@@ -208,3 +251,44 @@ class 창고:
             if (today - d).days >= SCORE_KEEP_DAYS:
                 self.지우기(name); gone.append(name)
         return gone
+
+
+# ── 명령줄 ─────────────────────────────────────────────
+def _명령줄():
+    import sys
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    c = 창고()
+    if "--잠그기" in sys.argv:
+        got, held = c.잠금_잡기("잠그기", stale_min=60)
+        if not got:
+            print("지금 %s 가 돌고 있다. 잠시 뒤 다시" % (held or {}).get("who"))
+            return 1
+        try:
+            n = 0
+            for name in c.목록():
+                if name in 암호화안함 or name.endswith("/") or c.잠겼나(name) != "열림":
+                    continue
+                data = c.읽기(name)
+                c.쓰기(name, data)
+                print("  %-28s %s" % (name, "잠금 OK" if c.잠겼나(name) == "잠김" and c.읽기(name) == data else "!! 다르다"))
+                n += 1
+            print("%d개 잠갔다" % n)
+        finally:
+            c.잠금_풀기()
+    열린것 = 0
+    for name in c.목록():
+        if name.endswith("/"):
+            continue
+        상태 = "공개(개인정보 없음)" if name in 암호화안함 else c.잠겼나(name)
+        열린것 += 상태 == "열림"
+        print("  %-28s %s" % (name, 상태))
+    if 열린것:
+        print("\n안 잠긴 파일 %d개. python 답글창고.py --잠그기" % 열린것)
+    return 1 if 열린것 else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_명령줄())
