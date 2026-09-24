@@ -476,3 +476,4 @@
 2026-09-24 21:40 유튜브 토큰 실패 (유튜브만 건너뜀. PC 에서 python youtube_token.py): invalid_grant Token has been expired or revoked.
 2026-09-24 21:40 유튜브 토큰 실패 (유튜브만 건너뜀. PC 에서 python youtube_token.py): invalid_grant Token has been expired or revoked.
 2026-09-24 21:49 유튜브 토큰 실패 (유튜브만 건너뜀. PC 에서 python youtube_token.py): invalid_grant Token has been expired or revoked.
+2026-09-24 21:50 유튜브 토큰 실패 (유튜브만 건너뜀. PC 에서 python youtube_token.py): invalid_grant Token has been expired or revoked.
