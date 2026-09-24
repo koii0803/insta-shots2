@@ -150,6 +150,20 @@ class 창고:
     def 기록_오늘(self):
         return self.읽기("기록/%s.json" % dt.datetime.now().strftime("%Y-%m-%d")) or []
 
+    def 토큰_적기(self, row):
+        """AI 한 번 부를 때마다 토큰·값을 적는다 (2026-09-24 사장님 지시: 기록은 클라우드로).
+
+        **안 지운다.** 남의 생년월일이 없어서 하루 뒤 삭제 대상이 아니다
+        (오래된것_지우기 는 기록/ 과 성적/ 만 본다).
+        PC 든 깃허브든 같은 파일에 쌓이니 어디서 얼마나 썼는지 한자리에서 보인다."""
+        key = "토큰/%s.json" % dt.datetime.now().strftime("%Y-%m-%d")
+        rows = self.읽기(key) or []
+        rows.append(row)
+        self.쓰기(key, rows)
+
+    def 토큰_오늘(self):
+        return self.읽기("토큰/%s.json" % dt.datetime.now().strftime("%Y-%m-%d")) or []
+
     def 성적_추가(self, rows):
         key = "성적/%s.json" % dt.datetime.now().strftime("%Y-%m-%d")
         cur = self.읽기(key) or []

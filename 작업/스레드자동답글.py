@@ -347,7 +347,7 @@ def prefilter(row):
 
 
 # ── claude 호출 ───────────────────────────────────────────────────
-def claude(prompt, schema, model, sys_prompt, timeout=240):
+def claude(prompt, schema, model, sys_prompt, timeout=240, 부르는곳="?"):
     """claude -p 로 JSON 하나 받는다. 구독으로 돈다(API 키 없음). 실패하면 {'__오류__': ...}."""
     # --tools/--disallowedTools 로 **도구를 아예 안 싣는다.**
     # 도구 설명이 요청마다 2만 7천 토큰을 먹고 있었다 → 1,400 으로 줄었다(2026-09-21 실측, 93% 절감).
@@ -371,12 +371,16 @@ def claude(prompt, schema, model, sys_prompt, timeout=240):
     # 통째로 try 라 여기서 뭐가 터져도 답글 흐름은 안 멈춘다.
     try:
         _u = outer.get("usage") or {}
-        runlog("토큰 %s 입력%s 생성%s 읽기%s 출력%s $%.4f" % (
-            model, _u.get("input_tokens", 0),
-            _u.get("cache_creation_input_tokens", 0),
-            _u.get("cache_read_input_tokens", 0),
-            _u.get("output_tokens", 0),
-            float(outer.get("total_cost_usd") or 0)))
+        _값 = float(outer.get("total_cost_usd") or 0)
+        _줄 = {"때": now().strftime("%Y-%m-%d %H:%M:%S"), "누가": WHO, "무엇": 부르는곳,
+               "모델": model, "입력": _u.get("input_tokens", 0),
+               "생성": _u.get("cache_creation_input_tokens", 0),
+               "읽기": _u.get("cache_read_input_tokens", 0),
+               "출력": _u.get("output_tokens", 0), "값": round(_값, 5)}
+        runlog("토큰 %s/%s 입력%s 생성%s 읽기%s 출력%s $%.4f" % (
+            부르는곳, model, _줄["입력"], _줄["생성"], _줄["읽기"], _줄["출력"], _값))
+        if STORE is not None:                    # 클라우드(R2)에도. --test 때는 창고가 없다
+            STORE.토큰_적기(_줄)
     except Exception:
         pass
     if outer.get("is_error"):
@@ -523,7 +527,8 @@ def extract(row):
         chain="\n".join(row["chain"][:-1]) or "(없음)",
         user=row["reply"].get("username"),
         text=(row["reply"].get("text") or "")[:500],
-    ), EXTRACT_SCHEMA, MODEL_EXTRACT, "너는 댓글 분류기다. 지시한 JSON 하나만 출력한다.")
+    ), EXTRACT_SCHEMA, MODEL_EXTRACT, "너는 댓글 분류기다. 지시한 JSON 하나만 출력한다.",
+        부르는곳="분류추출")
     if "__오류__" in ex:
         return ex
     # ── AI 가 흘린 것을 코드로 건진다 (2026-09-24). 손님이 적은 걸 또 묻는 게 제일 화나는 일이다
@@ -788,7 +793,8 @@ def write_reply(row, facts, missing, turn, fix=""):
         missing=", ".join(missing) if missing else "없음",
         turn=turn, turn_guide=guide, tone=tone_for(turn),
         fix=("\n## 다시 쓴다\n앞서 쓴 글이 이래서 반려됐다: **%s**\n같은 내용으로 그 부분만 고쳐서 다시 써라.\n" % fix) if fix else "",
-    ), WRITE_SCHEMA, MODEL_WRITE, "너는 만세력 표를 읽고 풀어 주는 사람이다. 지시한 JSON 하나만 출력한다.")
+    ), WRITE_SCHEMA, MODEL_WRITE, "너는 만세력 표를 읽고 풀어 주는 사람이다. 지시한 JSON 하나만 출력한다.",
+        부르는곳="풀이")
 
 
 def tidy(text):

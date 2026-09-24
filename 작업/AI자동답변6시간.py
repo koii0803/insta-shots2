@@ -110,7 +110,7 @@ def 갈라보기(row):
         틀 % (chr(10).join(row["chain"]) or "(없음)",
               row["reply"].get("username") or "?",
               (row["reply"].get("text") or "").strip()),
-        SCHEMA, 봇.MODEL_EXTRACT, SYS, timeout=120)
+        SCHEMA, 봇.MODEL_EXTRACT, SYS, timeout=120, 부르는곳="AI자동답변")
     if "__오류__" in out:
         return "끝남", 0, out["__오류__"]
     판단 = "이어짐" if (out.get("verdict") or "done") == "continue" else "끝남"
