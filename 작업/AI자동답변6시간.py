@@ -195,6 +195,12 @@ def 한바퀴(dry=False, 보기만=False):
             continue
 
         라벨, c2, 이유, 글, 보류 = 봇.handle(r, dry)
+        if 라벨 in ("함정", "악의"):        # 2026-09-26 절대 무시. 다시 보지도 않는다(토큰 아낌)
+            봇.runlog("     무시: %s" % 이유[:60])
+            if not dry:
+                본것.add(rid)
+                봇.STORE.보류_빼기([rid])
+            continue
         if not 글:
             봇.runlog("     답글 못 만듦: %s (%s %d)" % (보류 or 라벨, 라벨, c2))
             continue                       # 본것에 안 넣는다 — 다음 바퀴에 다시 해 본다
