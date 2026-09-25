@@ -395,6 +395,13 @@ def collect(tok, uid, deep=None):
 
 # ── 규칙 필터 (LLM 부르기 전. 여기서 걸리면 돈 안 씀) ──────────────
 def prefilter(row):
+    # 사장님이 직접 챙기기로 한 사람은 봇이 아예 손대지 않는다 (2026-09-25).
+    # 손님이 디엠으로 넘어갔는데 스레드에서 또 말 걸면 겹친다
+    try:
+        if STORE is not None and (row["reply"].get("username") or "") in STORE.손대지마_목록():
+            return "사장님이 직접 챙기는 사람"
+    except Exception:
+        pass
     t = (row["reply"].get("text") or "").strip()
     if not t:
         return "빈 글"

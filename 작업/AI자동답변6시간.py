@@ -140,9 +140,13 @@ def 주울것(tok, uid, 본것):
     """
     봇.load_done = lambda: 본것          # 본체 목록 말고 내 목록으로 본다
     보류 = 봇.STORE.보류_목록()
+    손대지마 = 봇.STORE.손대지마_목록()      # 사장님이 직접 챙기는 사람 (2026-09-25)
     골라진것, 걸린보류 = [], []
     for r in 봇.collect(tok, uid, deep=True):
         rid = r["reply"]["id"]
+        if (r["reply"].get("username") or "") in 손대지마:
+            걸린보류.append(rid)             # 보류목록에 있었으면 거기서도 빠지게
+            continue
         까닭 = 봇.prefilter(r)
         if rid in 보류:
             골라진것.append(r); 걸린보류.append(rid); continue

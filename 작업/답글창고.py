@@ -213,6 +213,24 @@ class 창고:
             cur.pop(r, None)
         self.쓰기("보류목록.json", cur)
 
+    def 손대지마_목록(self):
+        """자동 답글을 아예 달지 않을 사람들 (2026-09-25 사장님 지시).
+
+        손님이 디엠으로 넘어갔는데 봇이 스레드에서 계속 말을 걸면 겹친다
+        (@nujousmik: "메세지 좀 봐주세요" 라는데 봇이 스레드로 또 물었다).
+        여기 든 사람은 본체도 AI자동답변도 손대지 않는다. 사장님이 직접 한다."""
+        return set(self.읽기("손대지마.json") or [])
+
+    def 손대지마_넣기(self, 이름들):
+        cur = self.손대지마_목록() | set(이름들)
+        self.쓰기("손대지마.json", sorted(cur))
+        return cur
+
+    def 손대지마_빼기(self, 이름들):
+        cur = self.손대지마_목록() - set(이름들)
+        self.쓰기("손대지마.json", sorted(cur))
+        return cur
+
     def 토큰_적기(self, row):
         """AI 한 번 부를 때마다 토큰·값을 적는다 (2026-09-24 사장님 지시: 기록은 클라우드로).
 
