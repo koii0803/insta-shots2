@@ -56,7 +56,10 @@ BANNED = ["소름", "자빠질", "터진다", "터져", "100%", "반드시", "�
           "정확", "복권", "로또", "행운의 숫자", "당첨", "투자", "주식", "가상화폐", "암호화폐", "비트코인", "부동산", "합격", "수술", "수명", "죽을",
           "우울", "공황", "임신", "유산", "불임", "간·", "심장", "신장", "혈압", "혈당", "부적", "굿", "액운", "액막이",
           "저주", "운명을 바꾼", "마지막 기회", "오늘만", "놓치면", "검증", "1위", "유일", "최고", "전문가", " 명인", "명인이",
-          "직접 감정", "봐줄게", "봐준다", "풀어줄게", "상담", "—"]
+          "직접 감정", "봐줄게", "봐준다", "풀어줄게", "상담", "—",
+          # 2026-09-25 사장님 지시: **가운뎃점 절대 금지.** "범·말·개띠" 처럼 쓰지 마라.
+          # 항목은 쉼표로 묶고, 낱말 안에도 쓰지 않는다 (팀·소속 -> 팀 소속)
+          "·"]
 
 # ① 훅. 전부 "나"로 시작 (답글이 붙는 1인칭). {a}=띠
 HOOKS = [
@@ -107,9 +110,9 @@ RELATION_KIND = {"삼합": "열림", "육합": "열림", "충": "이동", "같�
 
 # ⑤·⑥ 막혀 있던 <A·B·C> → 움직임 → 귀인 / 올해는 유난히 <항목 4~5>. 흐름 종류(엔진 관계)마다 말이 다르다
 BLOCKED = ["연애", "재물", "직장", "인간관계", "이직", "계약", "이사", "공부", "사업", "관계 정리", "수입 흐름", "자리 이동", "새 인연", "오래된 인연"]
-MOVE_ITEMS = ["이직", "이사", "사람 정리", "자리 이동", "계약 갈아타기", "관계 재정리", "새 환경", "오래 미룬 결정", "팀·소속 변화", "거리 두기"]
+MOVE_ITEMS = ["이직", "이사", "사람 정리", "자리 이동", "계약 갈아타기", "관계 재정리", "새 환경", "오래 미룬 결정", "팀 소속 변화", "거리 두기"]
 OPEN_ITEMS = ["이직 제안", "계약", "새 인연", "오래된 인연 다시 닿기", "수입 길 늘어나기", "자리 이동", "자격 준비", "사업 확장",
-              "관계 정리", "이사·환경 변화", "공부 흐름", "사람 소개", "결정 마무리", "실력 인정", "승진·직급 변화", "해외·먼 곳 기회"]
+              "관계 정리", "이사 환경 변화", "공부 흐름", "사람 소개", "결정 마무리", "실력 인정", "승진 직급 변화", "해외 먼 곳 기회"]
 CALM_ITEMS = ["오래 미룬 정리", "관계 다지기", "실력 쌓기", "자격 준비", "돈 계획 다시 짜기", "자리 지키기", "사람 가려 만나기", "습관 바꾸기", "공부 흐름", "내년 준비"]
 POOLS = {
     "열림": dict(items=BLOCKED, blocked=["막혀 있던 <{items}> 쪽이"],
@@ -266,7 +269,7 @@ THEME_NO_REPEAT = 2                      # 바로 앞 2개와 같은 주제는 �
 MARKERS = {"흐름": "올해는 유난히", "돈": "올해 돈은 유난히", "관계": "올해 사람은 유난히", "기질": "이런 날 유난히", "시기": "지금은 유난히"}
 
 MONEY_IN = ["기다리던 돈", "밀린 돈", "새 수입 길", "자리 값 올라가기", "빌려준 돈 돌아오기", "부업 자리", "계약 마무리", "값 제대로 받기"]
-MONEY_OUT = ["사람한테 새는 돈", "충동으로 새는 돈", "미룬 정리 때문에 새는 돈", "체면 때문에 나가는 돈", "구독·습관으로 새는 돈", "남 대신 내는 돈"]
+MONEY_OUT = ["사람한테 새는 돈", "충동으로 새는 돈", "미룬 정리 때문에 새는 돈", "체면 때문에 나가는 돈", "구독 습관으로 새는 돈", "남 대신 내는 돈"]
 MONEY_KEEP = ["돈 계획 다시 짜기", "새는 구멍 막기", "자리 지키기", "값 올려 부르기 준비", "빚 줄이기", "내년 자금 만들기"]
 REL_IN = ["새 인연", "오래된 인연 다시 닿기", "귀인 소개", "가족 화해", "연락 끊긴 사람", "같이 일할 사람", "마음 열리는 사람"]
 REL_CUT = ["질질 끌던 관계", "말만 앞서는 사람", "기 빨리는 사람", "받기만 하는 사람", "애매하게 걸쳐 둔 사이", "돈 얽힌 사람"]
@@ -415,12 +418,12 @@ def build_theme(animal, table, rng, theme):
     ml = month_line(rng)                      # 이번 달 한 줄 (표에 없으면 건너뜀)
     if ml:
         lines.append(ml)
-    items = " · ".join(rng.sample(T["items"][kind], 3))
+    items = ", ".join(rng.sample(T["items"][kind], 3))
     lines.append(rng.choice(T["blocked"][kind]).format(items=items))
     lines.append(rng.choice(T["move"][kind]))
     lines.append(rng.choice(T["gain"][kind]))
     strong_items, strong_words = T["strong"][kind]
-    strong = " · ".join(rng.sample(strong_items, min(rng.choice([4, 5]), len(strong_items))))
+    strong = ", ".join(rng.sample(strong_items, min(rng.choice([4, 5]), len(strong_items))))
     lines.append(MARKERS[theme])
     lines.append("<%s> %s" % (strong, rng.choice(strong_words)))
     lines.append(rng.choice(T["timings"]))
@@ -449,11 +452,11 @@ def build(animal, table, rng):
     if ml:
         lines.append(ml)
     pool = POOLS[kind]
-    items = " · ".join(rng.sample(pool["items"], 3))
+    items = ", ".join(rng.sample(pool["items"], 3))
     lines.append(rng.choice(pool["blocked"]).format(items=items))
     lines.append(rng.choice(pool["move"]))
     lines.append(rng.choice(pool["gain"]))
-    strong = " · ".join(rng.sample(pool["strong_items"], rng.choice([4, 5])))
+    strong = ", ".join(rng.sample(pool["strong_items"], rng.choice([4, 5])))
     lines.append("올해는 유난히")
     lines.append("<%s> %s" % (strong, rng.choice(pool["strong"])))
     lines.append(rng.choice(TIMINGS))
