@@ -301,8 +301,30 @@ def reply_gap_left():
     return max(0, int(REPLY_GAP_SEC - min(passed)) + 1) if passed else 0
 
 
+# 올리기 직전 마지막 문 (2026-09-26). 만드는 단계 검사를 안 거친 글(임시 스크립트 등)도 여기서 막는다.
+# 9/23 "test reply" 사고가 바로 그 길로 났다. DM 상담(스레드30대여페르소나\DM상담\상담.py bad_out)과 같은 기준
+나가기전막을말 = re.compile(r"(test|reply|error|undefined|null|json|todo|lorem|\{|\}|</?\w+>|API|assistant|claude)", re.I)
+
+
+def 나가기전검사(text):
+    """문제 있으면 이유, 없으면 빈 문자열"""
+    t = (text or "").strip()
+    han, lat = len(re.findall(r"[가-힣]", t)), len(re.findall(r"[A-Za-z]", t))
+    if not t:
+        return "빈 글"
+    if han < 2 or lat > han:
+        return "한글이 거의 없음"
+    m = 나가기전막을말.search(t)
+    if m:
+        return "시험·오류 문구(%s)" % m.group(0)
+    return ""
+
+
 def publish(tok, uid, reply_id, text):
     """답글 하나 올린다. **앞 답글과 2분이 안 됐으면 기다렸다가** 올린다 (여기가 답글 나가는 유일한 문)."""
+    bad = 나가기전검사(text)
+    if bad:
+        raise RuntimeError("안 올리고 막음 — %s: %s" % (bad, (text or "")[:80]))
     wait = reply_gap_left()
     if wait > 0:
         runlog("  2분 간격: %d초 기다림" % wait)
