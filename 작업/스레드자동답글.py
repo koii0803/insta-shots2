@@ -144,19 +144,26 @@ def mark_done(reply_id, my_id, text):
     STORE.답한것_추가(reply_id)
 
 
-def write_log(row):
-    """판단 기록. 남의 생년월일이 들어가니 R2 에만, 하루 뒤 삭제."""
+def write_log(row, link=""):
+    """판단 기록. 남의 생년월일이 들어가니 R2 에만, 하루 뒤 삭제.
+    link = 그 댓글 주소. 6시간 요약에 무시·보류 링크로 붙는다 (2026-09-25 사장님 지시)."""
     keys = ["시각", "답글ID", "상대", "상대글", "라벨", "확신도", "이유", "처리", "답글문"]
-    STORE.기록_추가(dict(zip(keys, row)))
+    d = dict(zip(keys, row))
+    if link:
+        d["링크"] = link
+    STORE.기록_추가(d)
 
 
 # ── 텔레그램 ──────────────────────────────────────────────────────
-def tg_send(vault, text):
+def tg_send(vault, text, preview=True):
     tok, chat = vault.get("telegram_bot_token"), vault.get("telegram_chat_id")
     if not tok or not chat:
         log_err("텔레그램 토큰 없음")
         return None
-    body = urllib.parse.urlencode({"chat_id": chat, "text": text[:4000]}).encode("utf-8")
+    msg = {"chat_id": chat, "text": text[:4000]}
+    if not preview:
+        msg["disable_web_page_preview"] = "true"      # 링크 여러 개 붙은 요약에 미리보기 카드가 끼지 않게
+    body = urllib.parse.urlencode(msg).encode("utf-8")
     try:
         with urllib.request.urlopen("https://api.telegram.org/bot%s/sendMessage" % tok, body, timeout=30) as r:
             return json.load(r).get("result", {}).get("message_id")
@@ -1082,7 +1089,8 @@ def run(dry=False):
                     tg_send(vault, "🔚 @%s 와 %d번 주고받아서 자동 답글은 여기까지야.\n\n%s\n\n%s\n\n더 이어 가려면 사장님이 직접 달아줘"
                             % (user, r["used"], text[:200], r["post"].get("permalink") or ""))
                     state.setdefault("capped", []).append(user)
-                write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, "무시(규칙)", "", why, "무시", ""])
+                write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, "무시(규칙)", "", why, "무시", ""],
+                          r["reply"].get("permalink") or "")
                 mark_done(rid, "", "")
             continue
 
@@ -1109,7 +1117,8 @@ def run(dry=False):
             write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, label, conf, reason, "예약 " + due.strftime("%H:%M"), reply])
         elif label == "미성년":
             # 미성년만 그대로 버린다 (만 14세 미만 개인정보보호법). 여긴 안 바뀐다
-            write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, label, conf, reason, "무시", ""])
+            write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, label, conf, reason, "무시", ""],
+                      r["reply"].get("permalink") or "")
             mark_done(rid, "", "")
         elif label == "무시":
             # 2026-09-24 사장님 지시: **무시 폐지.** 버리지 않고 보류목록에 넣는다.
@@ -1119,7 +1128,8 @@ def run(dry=False):
                 STORE.보류_넣기(rid, {"user": user, "text": text, "reason": reason[:200],
                                       "turn": r["turn"], "때": now().strftime("%Y-%m-%d %H:%M"),
                                       "permalink": r["post"].get("permalink") or ""})
-            write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, label, conf, reason, "보류목록", ""])
+            write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, label, conf, reason, "보류목록", ""],
+                      r["reply"].get("permalink") or "")
             mark_done(rid, "", "")
         elif label == "보류":
             # 기술적 실패(사용량 한도·시간 초과·엔진 오류)는 **판단이 아니다.**
@@ -1135,8 +1145,10 @@ def run(dry=False):
             body += "\n\n→ 답하려면 이 메시지에 글을 적어 답장 (안 할 거면 '무시')"
             mid = tg_send(vault, body)
             if mid:
-                state.setdefault("reports", {})[str(mid)] = {"reply_id": rid, "user": user, "draft": ""}
-            write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, label, conf, "[%s] %s" % (hold, reason), "보고", ""])
+                state.setdefault("reports", {})[str(mid)] = {"reply_id": rid, "user": user, "draft": "",
+                                                             "link": r["reply"].get("permalink") or ""}
+            write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, label, conf, "[%s] %s" % (hold, reason), "보고", ""],
+                      r["reply"].get("permalink") or "")
 
     if not dry:
         STORE.쓰기("대기.json", queue)
@@ -1153,8 +1165,9 @@ def run(dry=False):
         # 6시간마다 한눈 요약 (00·06·12·18시). 그 시각이 지난 첫 바퀴에 한 번만.
         slot = "%s-%02d" % (now().strftime("%Y-%m-%d"), now().hour // REPORT_EVERY_HOURS * REPORT_EVERY_HOURS)
         if state.get("report_sent") != slot:
-            tg_send(vault, report_text(state, tok, uid))
+            tg_send(vault, report_text(state, tok, uid), preview=False)
             state["report_sent"] = slot
+            state["report_at"] = now().strftime("%Y-%m-%d %H:%M")     # 다음 요약은 이 뒤의 무시·보류만 링크로
             if now().hour < REPORT_EVERY_HOURS:      # 자정 회차에 하루치 정리
                 state["capped"] = []                 # 상한 알림은 날마다 새로
                 purge_pii()                          # 하루 지난 남의 생년월일 지우기
@@ -1229,6 +1242,8 @@ def report_text(state, tok=None, uid=None):
         act = r.get("처리", "")
         if act.startswith("예약"):
             n["예약"] += 1
+        elif act == "보류목록":        # 분류기가 '무시'라 한 것. 2026-09-24 부터 버리지 않고 보류목록에 쌓는다
+            n["보고"] += 1
         elif act in n:
             n[act] += 1
 
@@ -1250,6 +1265,15 @@ def report_text(state, tok=None, uid=None):
             out.append("아직 못 본 댓글 %d건 (다음 바퀴부터 차례로)" % state["waiting"])
         if state.get("reports"):
             out.append("내 답장 기다리는 것 %d건" % len(state["reports"]))
+            for item in list(state["reports"].values())[:LINK_MAX]:
+                if not item.get("link") and tok:
+                    try:                # 한 번 받은 링크는 state 에 남겨 다음 요약 땐 안 묻는다
+                        item["link"] = th_get(tok, item["reply_id"], fields="permalink").get("permalink") or ""
+                    except Exception:
+                        pass
+                out.append("@%s  %s" % (item.get("user") or "?", item.get("link") or "(링크 못 받음)"))
+            if len(state["reports"]) > LINK_MAX:
+                out.append("… 외 %d건" % (len(state["reports"]) - LINK_MAX))
         left = MAX_PER_DAY - n["발행"]
         if left <= 5:
             out.append("⚠️ 오늘 올릴 수 있는 답글 %d개 남음 (상한 %d)" % (max(left, 0), MAX_PER_DAY))
@@ -1271,7 +1295,40 @@ def report_text(state, tok=None, uid=None):
             out += ["", "── 일주일 중 답글 많은 글"]
             out += ["%s 답글%s 조회%s  %s" % (p["at"][5:], p.get("replies", "?"), p.get("views", "?"), p["훅"][:22])
                     for p in top]
+    out += 걸린것_링크(state, tok)
     return "\n".join(out)
+
+
+LINK_MAX = 10                   # 요약에 무시·보류 링크를 각각 이만큼까지만 (텔레그램 한 통 4,000자)
+
+
+def 걸린것_링크(state, tok=None):
+    """지난 요약 뒤에 무시·보류된 댓글을 링크로 (2026-09-25 사장님 지시).
+    00시 요약은 어제 18시 뒤 것도 봐야 하니 어제 기록까지 읽는다 (어제 파일은 요약 **뒤에** 지운다)."""
+    since = state.get("report_at") or (now() - dt.timedelta(hours=REPORT_EVERY_HOURS)).strftime("%Y-%m-%d %H:%M")
+    rows = []
+    for day in sorted({since[:10], now().strftime("%Y-%m-%d")}):
+        rows += STORE.읽기("기록/%s.json" % day) or []
+    rows = [r for r in rows if (r.get("시각") or "") >= since]
+    out = []
+    for name, acts in (("무시", ("무시",)), ("보류", ("보고", "보류목록"))):
+        got = sorted([r for r in rows if r.get("처리") in acts], key=lambda r: r.get("시각") or "", reverse=True)
+        if not got:
+            continue
+        out += ["", "── %s %d건 (지난 요약 뒤)" % (name, len(got))]
+        for r in got[:LINK_MAX]:
+            link = r.get("링크") or ""
+            if not link and tok and r.get("답글ID"):
+                try:                    # 링크를 안 적던 때의 기록 → 스레드에 물어본다
+                    link = th_get(tok, r["답글ID"], fields="permalink").get("permalink") or ""
+                except Exception:
+                    link = ""
+            why = re.sub(r"^\[[^\]]*\]\s*", "", r.get("이유") or "")[:30]
+            out.append("@%s 「%s」 %s\n%s" % (r.get("상대") or "?", (r.get("상대글") or "")[:20], why,
+                                           link or "(링크 못 받음)"))
+        if len(got) > LINK_MAX:
+            out.append("… 외 %d건" % (len(got) - LINK_MAX))
+    return out
 
 
 def check():
