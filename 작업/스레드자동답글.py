@@ -75,6 +75,8 @@ PROMO_TURN = 3                  # 이 턴부터 스하리·프로필을 청할 �
 MAX_PER_DAY = 998               # 하루 자동 답글 상한 (2026-09-21 사장님 지시). 넘으면 다음 날로 밀린다
 META_RESERVE = 20               # 메타 한도(답글 1000/일)에서 이만큼은 남겨 둔다
                                 # — 쇼츠 첫 답글(링크)과 손으로 다는 답글도 같은 한도를 먹는다
+REPLY_GAP_SEC = 120             # 답글과 답글 사이 최소 2분 (2026-09-25 사장님 지시). 자동·AI자동답변·사장님 답장 전부
+PUBLISH_WAIT_MAX = 240          # 한 바퀴에 2분 간격 맞추느라 기다리는 최대 시간. 나머지는 다음 바퀴(5분마다)로
 MAX_PER_RUN = 12                # 한 바퀴에 처리할 최대 건수. 1건당 약 45초라 12건이면 9분쯤 걸린다
 LOCK_STALE_MIN = 60             # 잠금을 '깨진 것'으로 보는 시간. 한 바퀴가 길어질 수 있어 넉넉히
 POST_AGE_DAYS = 7               # 일주일치 글까지 답글을 본다 (2026-09-21 사장님 "일주일은 커버를 해야지")
@@ -275,10 +277,39 @@ def reply_quota_left(tok, uid):
         return None
 
 
+_last_reply_local = [0.0]        # R2 에 못 적었을 때를 대비한 이 프로세스 안 기록
+
+
+def reply_gap_left():
+    """마지막 답글 뒤 2분이 안 지났으면 남은 초 (2026-09-25 사장님 지시: 답글 사이 최소 2분).
+    R2 의 마지막답글.json 을 본다 — PC·깃허브·AI자동답변이 다 같은 시각을 본다."""
+    passed = []
+    try:
+        last = (STORE.읽기("마지막답글.json") or {}).get("때")
+        if last:
+            passed.append((now() - dt.datetime.strptime(last, "%Y-%m-%d %H:%M:%S")).total_seconds())
+    except Exception as e:
+        log_err("마지막답글 시각 못 읽음: %s" % str(e)[:80])
+    if _last_reply_local[0]:
+        passed.append(time.time() - _last_reply_local[0])
+    return max(0, int(REPLY_GAP_SEC - min(passed)) + 1) if passed else 0
+
+
 def publish(tok, uid, reply_id, text):
+    """답글 하나 올린다. **앞 답글과 2분이 안 됐으면 기다렸다가** 올린다 (여기가 답글 나가는 유일한 문)."""
+    wait = reply_gap_left()
+    if wait > 0:
+        runlog("  2분 간격: %d초 기다림" % wait)
+        time.sleep(wait)
     c = th_post(tok, uid + "/threads", media_type="TEXT", text=text, reply_to_id=reply_id)
     time.sleep(5)
-    return th_post(tok, uid + "/threads_publish", creation_id=c["id"]).get("id")
+    mid = th_post(tok, uid + "/threads_publish", creation_id=c["id"]).get("id")
+    _last_reply_local[0] = time.time()
+    try:
+        STORE.쓰기("마지막답글.json", {"때": now().strftime("%Y-%m-%d %H:%M:%S"), "누가": WHO})
+    except Exception as e:
+        log_err("마지막답글 시각 못 적음: %s" % str(e)[:80])      # 답은 나갔다. 이 프로세스 안에선 로컬 시각으로 막는다
+    return mid
 
 
 def build_chain(by_id, c, limit=12, 머리=3):
@@ -1031,8 +1062,13 @@ def run(dry=False):
     # 2) 대기줄 발행
     quota = reply_quota_left(tok, uid) if queue and not dry else None
     left, sent = [], 0
-    for q in queue:
+    started = time.time()
+    for q in sorted(queue, key=lambda x: x["due"]):           # 오래 기다린 것부터
         if dry or q["due"] > now().strftime("%Y-%m-%d %H:%M:%S"):
+            left.append(q)
+            continue
+        # 답글 사이 2분(publish 가 기다린다). 이 바퀴에서 기다린 게 4분을 넘으면 다음 바퀴로 넘긴다
+        if time.time() - started + reply_gap_left() > PUBLISH_WAIT_MAX:
             left.append(q)
             continue
         if quota is not None and quota - sent <= META_RESERVE:
