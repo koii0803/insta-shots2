@@ -571,79 +571,28 @@ def selftest(n):
 
 
 
-# ── 하루 계획 (00시 넘어 첫 AI 가 부른다. 개수·시각·자리 종류를 기계가 정한다) ─────────────
-PLAN_MIN, PLAN_MAX = 4, 6     # 2026-09-22 사장님 지시 "최소 4~6개, 시간은 올랜덤" (전엔 3~5)
-# 시간대 6개 (사장님이 정한 4개를 살짝 넓히고 오전·오후 2개 추가). 한 자리엔 글 하나. 자리 안에서 분은 완전 랜덤.
-SLOT_WINDOWS = {"아침": (7, 30, 8, 50), "오전": (10, 0, 11, 20), "낮": (11, 40, 13, 30),
-                "오후": (15, 0, 16, 20), "저녁": (17, 30, 18, 50), "밤": (21, 0, 23, 30)}   # (시,분,시,분)
-PERSON_EVERY_DAYS = 3        # 사람 글은 3~4일에 한 번
-ANIMAL_EXTRA = 1             # 띠 글 2개(쇼츠와 같이) 말고 **추가로** 띠 자리 몇 개를 더 줄지.
-                             # 2026-09-23 사장님 "일상글 한 단계 낮추자" → 1. 0 으로 되돌리면 예전 비율.
+# ── 하루 계획 ─────────────────────────────────────────────────────
+# 2026-09-26 사장님 지시: **하루 4개만. 일반글(일상·일진·사람) 아예 안 올린다.**
+# 시간대 4개에 하나씩, 시간대 안에서 분은 랜덤. 글 종류는 아래 5유형 중 그날 안 겹치게 랜덤 4개.
+# (5유형 = 스레드 상위 사주 글 실측 2026-09-26: 소원형 7천/771 · 특징 나열 1.1천 · 띠+년생 537 · 살 경고 530/127 · 모집 42/71)
+SLOT_WINDOWS = {"아침": (6, 17, 7, 27), "낮": (14, 13, 15, 11),
+                "저녁": (18, 33, 18, 46), "밤": (23, 0, 23, 30)}   # (시,분,시,분)
+KINDS = ["소원", "특징", "띠", "경고", "모집"]
 
 
 def plan_today(day=None, rng=None, last_person=None):
-    """오늘 글 자리 4~6개(2026-09-22). 띠 글 2개(쇼츠와 같은 낮·밤)는 고정, 나머지는 일상글, 3~4일에 한 번 사람 글(저녁).
-    돌려주는 것: [{"kind": "띠|일상|사람", "at": "YYYY-MM-DD HH:MM"}, ...] 시각순. 서로 1시간 이상 띄운다.
-    last_person = 마지막 사람 글 날짜(str) 또는 None."""
+    """오늘 글 자리 4개. 돌려주는 것: [{"kind": 5유형 중 하나, "at": "YYYY-MM-DD HH:MM", "win": 시간대}, ...] 시각순.
+    last_person 은 옛 호출 모양을 안 깨려고 받기만 한다."""
     from datetime import datetime, timedelta
     rng = rng or random.Random()
     day = day or datetime.now().strftime("%Y-%m-%d")
-    n = rng.randint(PLAN_MIN, PLAN_MAX)
     d0 = datetime.strptime(day, "%Y-%m-%d")
-
-    def pick(win):
-        h1, m1, h2, m2 = SLOT_WINDOWS[win]
-        a, b = h1 * 60 + m1, h2 * 60 + m2
-        t = rng.randint(a, b)
-        return d0 + timedelta(minutes=t)
-
-    slots = [("띠", pick("낮")), ("띠", pick("밤"))]
-    person_due = True
-    if last_person:
-        person_due = (d0 - datetime.strptime(last_person, "%Y-%m-%d")).days >= rng.choice([PERSON_EVERY_DAYS, PERSON_EVERY_DAYS + 1])
-    extra = ["아침", "오전", "오후", "저녁"]        # 띠 글이 낮·밤을 쓰니 나머지 4자리에서 랜덤으로 고른다
-    rng.shuffle(extra)
-    # 2026-09-23 사장님 지시 "일상글 한 단계 낮추자": 남는 자리 중 하나를 띠 글로 돌린다.
-    # 일상 글이 하루 2.3개(45%)라 사주 얘기보다 많았다. 이 한 줄로 1.3개(26%)가 된다.
-    animal_extra = ANIMAL_EXTRA
-    for win in extra:
-        if len(slots) >= n:
-            break
-        if person_due and win == "저녁" and not any(k == "사람" for k, _ in slots):
-            kind = "사람"                          # 사람 글은 저녁(밤은 띠 글)
-        elif not any(k == "증상" for k, _ in slots):
-            # 증상 글 하루 1개 (2026-09-23). 띠를 안 부르고 '증상'으로 걸어서 12명 중 1명이 아니라 누구나 멈추게.
-            # 유입은 띠 글에서만 나오는데(조회 3,874 vs 일상 30~280) 그 띠 사람만 멈추는 게 한계였다.
-            kind = "증상"
-        elif animal_extra > 0:
-            kind, animal_extra = "띠", animal_extra - 1
-        else:
-            kind = "일상"
-        slots.append((kind, pick(win)))
-    # 일상 자리는 **반드시 하나 이상**. 개수가 3개로 뽑히고 사람 글이 걸린 날은
-    # 띠2 + 사람1 이 돼서 일상이 0이 됐다(300번 중 27번 = 9%). 그러면 일진 글까지 같이 사라진다
-    # — 일진은 '일상 자리 중 첫 번째'를 쓰기 때문(2026-09-21 오늘 실제로 하루치 0개가 나왔다).
-    if not any(k == "일상" for k, _ in slots):
-        used = {t.hour for _, t in slots}
-        for win in extra:
-            h1 = SLOT_WINDOWS[win][0]
-            if not any(abs(h - h1) < 2 for h in used):
-                slots.append(("일상", pick(win)))
-                break
-        else:
-            slots.append(("일상", pick("아침")))
-
-    slots.sort(key=lambda x: x[1])
-    # 1시간 간격 보장: 겹치면 뒤로 민다
-    for i in range(1, len(slots)):
-        if (slots[i][1] - slots[i - 1][1]) < timedelta(hours=1):
-            slots[i] = (slots[i][0], slots[i - 1][1] + timedelta(hours=1))
-    # 뒤로 밀다가 **자정을 넘긴 자리는 버린다.**
-    # 넘기면 그 글이 다음 날짜로 등록되고, 다음 날 하루치가 또 만들어져 글이 겹친다
-    # (2026-09-21 확인: 300번 중 6번 = 2%. 9/22 에 띠 글이 3개가 된 원인으로 보인다).
-    end = d0 + timedelta(days=1)
-    slots = [s for s in slots if s[1] < end]
-    return [{"kind": k, "at": t.strftime("%Y-%m-%d %H:%M")} for k, t in slots]
+    kinds = rng.sample(KINDS, len(SLOT_WINDOWS))
+    out = []
+    for (win, (h1, m1, h2, m2)), kind in zip(SLOT_WINDOWS.items(), kinds):
+        t = d0 + timedelta(minutes=rng.randint(h1 * 60 + m1, h2 * 60 + m2))
+        out.append({"kind": kind, "at": t.strftime("%Y-%m-%d %H:%M"), "win": win})
+    return sorted(out, key=lambda x: x["at"])
 
 
 if __name__ == "__main__":

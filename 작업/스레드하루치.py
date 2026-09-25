@@ -1,19 +1,16 @@
 # -*- coding: utf-8 -*-
-"""깃허브 액션이 매일 아침 돌리는 스레드 하루치 만들기 (2026-09-19, PC 꺼져 있어도 글이 나가게). 사용자가 직접 만질 일 없음.
+"""깃허브 액션이 매일 새벽 돌리는 스레드 하루치 만들기 (2026-09-19, PC 꺼져 있어도 글이 나가게). 사용자가 직접 만질 일 없음.
 
-하는 일 (스레드발행 스킬 '하루치 만들기' 절을 그대로 코드로):
-  1) 오늘 계획 = 스레드글.plan_today() (3~5개: 띠 2 + 일상 + 3~4일에 한 번 사람). 개수·시각은 기계가 정한다.
-  2) 예약표(쇼츠예약.json)에 오늘 것이 이미 있으면 그만큼 뺀다.
-     - 띠 글: PC 새벽 루틴이 쇼츠와 같이 넣은 띠 글(threads_text 있는 인스타 건)이 오늘 2개 있으면 안 만든다. 부족한 만큼만 글만으로 만든다.
-       (PC 가 꺼져 쇼츠가 없으면 띠 글 2개를 여기서 만든다 → 스레드는 하루도 안 빈다)
-     - 일상·사람: 오늘 같은 종류가 이미 있으면 안 만든다.
-  3) 띠 글 = 스레드글.generate() + auto_hide()(가림 기준 표 그대로: 항목 줄 + 시점 앞부분).
-     일진 글 = 일진글.py(오늘 달력, 규칙만, AI 없음) — 일상 자리 중 첫 번째. 나머지 일상 글 = 클로드에 스킬 '일상 글' 절 규칙으로 부탁 → 스레드글.check() 통과할 때까지 3번.
-     사람 글 = 실제 있었던 일만 → 스레드소재.txt 에 사장님(또는 PC AI)이 적어 둔 줄 하나를 써서 클로드에 부탁. 소재 없으면 그 자리는 비운다(안 지어냄).
-  4) 예약표에 threads-<종류>-<시각> 건으로 넣고(threads_status 대기), 스레드글기록.jsonl 에 기록. 발행은 shorts-publish 가 30분마다.
-  5) 스레드하루치기록.json 에 오늘 날짜를 적어 같은 날 두 번 안 돈다(수동 실행해도).
-클로드가 없으면 띠 글만 만들고 일상·사람은 건너뛴다(기록 남김, 액션은 성공).
-로컬 시험: python 작업/스레드하루치.py --dry-run [--day 2026-09-19]  (아무것도 안 바꿈. 키 없으면 일상 글은 건너뜀)
+2026-09-26 사장님 지시로 바뀜: **하루 4개만. 일반글(일상·일진·사람) 아예 안 올린다.**
+  1) 오늘 계획 = 스레드글.plan_today() — 시간대 4개(06:17~07:27 · 14:13~15:11 · 18:33~18:46 · 23:00~23:30)에 하나씩,
+     분은 시간대 안에서 랜덤. 종류는 5유형(소원·특징·띠·경고·모집) 중 그날 안 겹치게 랜덤 4개.
+  2) 띠 = 스레드글.generate() + auto_hide(). 나머지 넷 = 클로드에 유형별 틀로 부탁 → 스레드글.check() 통과할 때까지 3번.
+     특징 글은 마지막 "어떤 사주냐면," 다음 줄(답)을 가림(스포일러)으로 숨긴다.
+  3) 예약표에 threads-<종류>-<시각> 건으로 넣는다(threads_status 대기). 발행은 shorts-publish 가 30분마다.
+     릴스에 딸린 스레드 글은 쇼츠발행.py 가 더는 안 올린다 (하루 4개를 지키려고).
+  4) 스레드하루치기록.json 에 오늘 날짜를 적어 같은 날 두 번 안 돈다(수동 실행해도).
+  시각이 이미 지난 자리는 그 시간대 남은 구간에서 다시 뽑는다. 시간대가 다 지났으면 건너뛴다.
+로컬 시험: python 작업/스레드하루치.py --dry-run [--day 2026-09-27]  (아무것도 안 바꿈)
 """
 import os
 import re
@@ -22,20 +19,17 @@ import json
 import random
 import shutil
 import subprocess
-import urllib.request
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import 스레드글
-import 일진글          # 일상 자리 하나는 오늘 일진 글 (2026-09-19 사장님 지시)
 
 ROOT = Path(__file__).resolve().parent.parent
-import 쇼츠창고                    # 예약표·기록·소재는 전부 R2 창고 shorts/ (2026-09-25). 깃허브엔 안 남긴다
+import 쇼츠창고                    # 예약표·기록은 전부 R2 창고 shorts/ (2026-09-25). 깃허브엔 안 남긴다
 LOG_ERR = "오류기록.txt"
 DONE = "스레드하루치기록.json"
-TOPICS = "스레드소재.txt"          # 사람 글 소재. 한 줄에 하나, 위에서부터 쓰고 지운다. 넣기: python 쇼츠창고.py --소재 "한 줄"
 KST = ZoneInfo("Asia/Seoul")
 DRY = "--dry-run" in sys.argv
 # 글 쓰는 AI = 클로드 (2026-09-23 사장님 지시 "제미나이 근처도 가지 마").
@@ -49,75 +43,61 @@ try:
 except Exception:
     pass
 
-# 스레드발행 스킬 '일상 글'·'사람 글' 절 그대로. 실측 원문은 공개 저장소에 안 넣는다(남의 글). 말투 규칙만.
-# 2026-09-21: 소재가 '요일 + 코딩'으로 굳어서 소재 바퀴(일상소재축.json) + 시간대 톤 + 실제 날씨를 넣음. 사업·코딩 소재는 뺌(= 사람 글 몫).
-DAILY_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 혼자 사는 30대 남자. 출근은 안 한다. 직장인 흉내 안 낸다.
-오늘: {day} {weekday}요일, {slot}({hour}시쯤 올라감).
-
-이번 글의 소재는 "{axis}" 하나로 간다. 다른 소재로 새지 않는다.
-  쓸 것: {axis_use}
-  피할 것: {axis_avoid}
-{weather}
-말투는 {tone}. **말투만 그렇게 한다. 소재는 위 "{axis}" 하나뿐이다. 말투 때문에 다른 소재로 새지 않는다.**
-마지막 질문은 {qname}으로 끝낸다 ({qhow})
-
-스레드 일상 글 딱 하나만 써라. 설명·따옴표·제목 없이 글 본문만.
-- 반말, 1인칭 "나". 마지막 줄은 반드시 물음표로 끝낸다.
-- **반드시 2줄 또는 3줄로 줄을 나눠 쓴다.** 한 덩어리로 길게 쓰지 않는다. 줄마다 한 문장이면 된다.
-- 140자 안. 짧을수록 좋다.
-
-**사람이 쓴 글처럼 보이는 게 제일 중요하다:**
-- **한 가지만 붙잡는다.** 소재 안에서도 장면 하나만 쓴다. 두세 가지를 나열하면 광고처럼 보인다.
-  (나쁜 예: 배달비도 비싸고 구독료도 나가고 통신비도 나가고 / 좋은 예: 배달비 5천원 보고 앱 껐다)
-- 구체적인 것 하나를 꼭 넣는다. 숫자·물건 이름·시각 같은 것 (예: "4천원", "3시", "편의점", "충전기 두 개").
-- 결론을 내지 않는다. 교훈·정리·조언으로 끝내지 않는다.
-- 문장을 다듬지 않는다. 앞뒤 대구를 맞추거나 운율을 만들지 않는다. 같은 구조의 문장을 나란히 쓰지 않는다.
-- "~하는 요즘이다", "~인 것 같다", "~기분이네" 같은 매끈한 마무리 안 쓴다. 말하다 만 것처럼 툭 끊어도 된다.
-- 감탄·호들갑 없다. 담담하게.
-- 내가 무슨 일 하는지 설명하지 않는다. 사주·사이트·일 얘기는 아예 꺼내지 않는다.
-
-- 링크·해시태그·이모지 없음. "스하리" 없음. 줄표(—) 없음.
-- 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확, 병·치료·수술·죽음·임신·우울, 복권·로또·주식·투자·부동산, 부적·굿, 상담, 봐준다.
-- 사주 봐준다는 말, 실력 자랑, 상담 권유 없음."""
-
-PERSON_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 사업 처음 하는 사람이 낮은 자세로 도움을 구하는 글이다. 목적은 답글(훈수·시비·응원 전부 환영).
-실제 있었던 일(아래 소재)만 쓴다. 없는 일·숫자를 보태지 않는다.
-소재: {topic}
-틀(순서대로, 각 한 줄, 총 4~5줄, 반말):
-① "나 팔자오빠." + 지금 상황 한 줄(초보·준비 중·처음)
-② 솔직한 고백(모르는 것 / 안 되는 것 / 헷갈리는 것)
-③ 구체적인 질문 하나("이거 어떻게 해?")
-④ 살짝 열어두기("욕해도 됨" / "틀린 거 있으면 말해줘")
-- 사주 봐준다는 말·실력 자랑·상담 없음. 돈 얘기는 그냥 "돈"·"원". 사이트 안 화폐를 말할 때만 "엽전"(코인이라 부르지 않음). 링크·해시태그·이모지·줄표(—) 없음.
-- 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확.
-- 300자 안. 설명·따옴표·제목 없이 글 본문만."""
-
-# 증상 훅 글 (2026-09-23 사장님 지시). 띠를 안 부르고 '증상'으로 건다 — 12명 중 1명이 아니라 누구나 멈춘다.
-# 실측 근거: 우리 띠 글은 조회 3,874까지 나오지만 그 띠 사람만 멈춘다. 팔로워 5.8만 계정은 전부 이 방식.
-SYMPTOM_PROMPT = """너는 스레드 계정 "팔자오빠"로 글을 쓴다. 사주로 사람을 가르는 글이다. 반말. 30대 남자.
-목적: 읽는 사람이 "이거 난데" 하고 멈춰서 댓글에 생년월일을 남기게 하는 것.
-
-오늘 소재: {axis} — {symptom}
-이런 식으로 갈린다(참고만, 그대로 베끼지 마): {split}
-가르는 기준: {basis} — {basis_how}
-오늘 글꼴: {form} — {form_how}
-
-틀(반말, 총 6~12줄):
-① 첫 줄 = 증상 한마디. 띠·사주 얘기 없이 증상만. 짧게. (예: "잘못 자면 더 피곤해")
-② 둘째 줄 = 무슨 기준으로 가르는지 한 줄
-③ 본문 = **위 글꼴대로** 쓴다. 글꼴이 목록이 아니면 번호를 억지로 붙이지 않는다
-④ 증상은 **구체적으로**. 슬래시로 툭툭 끊어도 된다 (예: "누우면 내일 계획 / 지난 대화 재생 / 두 시 세 시")
-⑤ 마지막 = 네 년생 넣으면 30초. 링크는 첫 답글에
-⑥ 맨 끝 = 질문 한 줄로 끝낸다 (물음표로 끝)
-
-- 지금은 {month}월이다. 이 달 기운을 한 줄 넣어도 좋다(억지로는 말고).
+# ── 5유형 틀 (2026-09-26 스레드 상위 사주 글 실측). 남의 글 원문은 안 넣는다. 꼴만 ──────────
+_막힌말 = ", ".join(w for w in 스레드글.BANNED if w.strip() and w not in ("—", "·"))
+COMMON = """
+공통 규칙
+- 너는 스레드 계정 "팔자오빠"다. 30대 남자. 사주 달력표 뽑는 사람.
+- 링크, 해시태그, 이모지, 줄표(—), 가운뎃점(·) 없음. 여러 개를 묶을 땐 쉼표로.
+- 금지어(법, 계정 규칙): """ + _막힌말 + """
+- 건강, 병, 임신, 주식, 투자, 부동산, 로또, 부적, 굿 얘기 금지.
 - 단정하지 않는다. "~인 사람이 있어", "~쪽이야" 처럼 연다.
-- 전문어(십성·신살 이름)는 써도 한 번만. 쓰면 바로 쉬운 말로 풀어준다.
-- 건강·병·수술·죽음·임신, 주식·투자·부동산·로또, 부적·굿 얘기 금지. 법으로 막혀 있다.
-- 금지어: 소름, 자빠질, 터진다, 100%, 반드시, 무조건, 확실, 족집게, 적중, 보장, 정확, 합격, 1위.
-  ("1위"는 광고법상 순위 표시라 막혀 있다. 순서를 매길 땐 "제일 심한 건 / 그다음은" 처럼 쓴다.)
-- 링크·해시태그·이모지·줄표(—) 없음. 450자 안.
-- 설명·따옴표·제목 없이 글 본문만."""
+- 설명, 따옴표, 제목 달기 없이 글 본문만 내놓는다."""
+
+# ① 소원형: "이 글 보이면 ~ 댓글에 한 단어" (실측 7천/771 — 풀이 없이 댓글 한 줄로 끝나서 참여가 쉽다)
+WISH_PROMPT = """스레드에 올릴 짧은 글 하나. 목적: 지나가던 사람이 멈춰서 댓글에 한 단어를 남기게.
+틀(반말, 4~6줄):
+1) 첫 줄은 "이 글 보이면" 으로 시작해서 그냥 넘기지 말라는 한 줄
+2) 이번 달 기운 한 줄: {month}
+3) 이 흐름이 누구한테 오는지 한두 줄. 누구나 자기 얘기 같게(오래 버틴 사람, 막혀 있던 사람 같은 식)
+4) 마지막 줄: 댓글에 "{word}" 한 단어 남기고 가라는 말
+""" + COMMON
+
+# ② 특징 나열형: <○○한 사람 사주> + 번호 특징 + "어떤 사주냐면," + 답 한 줄(가림) (실측 1.1천)
+FEATURE_PROMPT = """스레드에 올릴 글 하나. 목적: 읽는 사람이 "이거 난데" 하고 멈춰서 가려진 답을 눌러 보게.
+오늘 소재: {axis} ({symptom})
+이런 식으로 갈린다(참고만, 베끼지 마): {split}
+틀(반말):
+1) 첫 줄 = 꺾쇠 제목 한 줄. 예 모양: <{axis} 쪽으로 사는 사람 사주> (말은 네가 새로)
+2) 번호 붙인 특징 5~7줄. 누구나 뜨끔할 만큼 구체적으로, 한 줄에 하나
+3) 끝에서 둘째 줄 = 딱 "어떤 사주냐면,"
+4) 마지막 줄 = 답 한 줄. 일간이나 오행이나 십성 하나로, 쉬운 말을 붙여서 (예 모양: 식상이 강한 사주, 말과 손으로 먹고사는 쪽)
+""" + COMMON
+
+# ④ 경고형: "죄송하지만" + 살(煞) 이름 한자 + 뜻 (실측 530/127 — 경고인 척 칭찬, 한자가 붙어 전문가처럼 보인다)
+WARN_PROMPT = """스레드에 올릴 글 하나. 경고인 척하지만 사실은 추켜세우는 글.
+오늘 붙잡을 살: {sal}
+틀(이 글만 합쇼체, 5~8줄):
+1) 첫 줄 = "죄송하지만"
+2) 둘째 줄 = 이 살 가진 사람은 ~하게 살지 마십시오, ~하며 사십시오 같은 한 줄 (뜻밖의 칭찬 쪽으로)
+3) 번호 붙여 2~3개. 첫째는 반드시 위 살. 모양: 살 이름(한자) 다음 줄에 그 뜻 한 줄
+4) 마지막 줄 = 내 사주에 이 살 있는지 궁금하면 년생 남기라는 한 줄
+""" + COMMON
+
+# ⑤ 모집형: 생년월일시, 성별, 고민 남기라고 받는다 (실측 42/71 — 좋아요보다 댓글이 많다. 답글 기계가 다 받는다)
+RECRUIT_PROMPT = """스레드에 올릴 글 하나. 목적: 댓글로 생년월일을 받는 것. 답글은 내가 순서대로 단다.
+오늘: {day} {weekday}요일 {when}
+틀(반말, 6~9줄):
+1) 첫 줄 = 오늘 좀 한가하다는 식의 자연스러운 이유 한 줄 (요일이나 시간대를 핑계로. 매번 다르게)
+2) 요즘 제일 신경 쓰이는 거 하나 남기라는 한 줄
+3) 예시 고민 서너 개 쉼표로 (재회, 이직, 돈, 결혼, 인간관계 중에서)
+4) 남길 것 세 줄: 생년월일 / 태어난 시간(몰라도 됨) / 성별
+5) 마지막 줄 = 댓글 순서대로 짚어준다는 한 줄 ("봐줄게", "상담" 이라는 말은 쓰지 마)
+""" + COMMON
+
+WISH_WORDS = ["받는다", "온다", "나다", "열린다", "간다", "들어와"]
+SALS = ["백호살(白虎殺)", "현침살(懸針殺)", "괴강살(魁罡殺)", "양인살(羊刃殺)", "화개살(華蓋殺)", "역마살(驛馬殺)",
+        "도화살(桃花殺)", "홍염살(紅艶殺)", "천을귀인(天乙貴人)", "문창귀인(文昌貴人)", "암록(暗祿)", "원진살(怨嗔殺)"]
 
 WEEKDAY = "월화수목금토일"
 
@@ -196,45 +176,6 @@ def ask(prompt, must_question=False, tries=3, daily=False, maxlines=4, minlines=
     return None
 
 
-AXES = Path(__file__).resolve().parent / "일상소재축.json"
-
-
-def weather_today():
-    """서울 오늘 날씨 한 줄. open-meteo(무료·키 없음). 실패하면 None → '날씨' 축을 안 쓴다."""
-    url = ("https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.978"
-           "&daily=temperature_2m_max,temperature_2m_min,precipitation_sum"
-           "&current=temperature_2m&timezone=Asia%2FSeoul&forecast_days=1")
-    try:
-        with urllib.request.urlopen(url, timeout=20) as r:
-            j = json.load(r)
-        d, c = j["daily"], j.get("current", {})
-        hi, lo = round(d["temperature_2m_max"][0]), round(d["temperature_2m_min"][0])
-        rain = d["precipitation_sum"][0] or 0
-        now_t = c.get("temperature_2m")
-        s = "서울 오늘 최고 %d도 최저 %d도" % (hi, lo)
-        if now_t is not None:
-            s += ", 지금 %d도" % round(now_t)
-        s += ", 비 %s" % ("옴(%.0fmm)" % rain if rain >= 1 else "안 옴")
-        return s
-    except Exception as e:
-        print("  날씨 못 받음(%s) → 날씨 축 건너뜀" % str(e)[:60])
-        return None
-
-
-def pick_axis(rec, rng, weather):
-    """최근 10개 일상 글에 쓴 축을 빼고 하나 고른다. 다 썼으면 가장 오래된 것부터 푼다."""
-    cfg = json.loads(AXES.read_text(encoding="utf-8"))
-    axes = [a for a in cfg["축"] if weather or not a.get("날씨필요")]
-    used = [r.get("훅") for r in rec if r.get("종류") == "일상" and r.get("훅")][-10:]
-    left = [a for a in axes if a["이름"] not in used]
-    if not left:                                  # 11개를 다 돌았으면 가장 오래 안 쓴 것
-        order = {n: i for i, n in enumerate(used)}
-        left = sorted(axes, key=lambda a: order.get(a["이름"], -1))[:3]
-    a = rng.choice(left)
-    q = rng.choice(cfg["질문틀"])
-    return a, q, cfg["시간대톤"]
-
-
 SYMPTOMS = Path(__file__).resolve().parent / "증상축.json"
 
 
@@ -252,39 +193,35 @@ def _rotate(items, used, keep, rng):
     return rng.choices(left, weights=[x.get("무게", 1) for x in left])[0]
 
 
-def pick_symptom(rec, rng):
-    """축·가르는 기준·글꼴을 따로 돌려 고른다. (축, 기준, 글꼴)
-
-    경우의 수 24 × 6 × 5 = 720 (2026-09-23 사장님 "경우의 수를 여러 가지 뒀으면").
-    축은 최근 10개, 기준·글꼴은 최근 4개를 피한다 — 축은 소재라 오래 피해야 하고,
-    기준·글꼴은 개수가 적어 너무 오래 피하면 돌 게 없다.
-    """
-    cfg = json.loads(SYMPTOMS.read_text(encoding="utf-8"))
-    rows = [r for r in rec if r.get("종류") == "증상"]
-    ax = _rotate(cfg["축"], [r.get("훅") for r in rows if r.get("훅")], 10, rng)
-    basis = _rotate(cfg["가르는 기준"], [r.get("기준") for r in rows if r.get("기준")], 4, rng)
-    form = _rotate(cfg["글꼴"], [r.get("글꼴") for r in rows if r.get("글꼴")], 4, rng)
-    return ax, basis, form
+def _pick(items, used, keep, rng):
+    """최근 keep 개에 쓴 것을 빼고 하나. 다 썼으면 아무거나."""
+    left = [x for x in items if x not in used[-keep:]] or items
+    return rng.choice(left)
 
 
-def slot_name(at):
-    h = int(at[11:13]) * 60 + int(at[14:16])
-    for name, (h1, m1, h2, m2) in 스레드글.SLOT_WINDOWS.items():
-        if h1 * 60 + m1 - 60 <= h <= h2 * 60 + m2 + 60:
-            return name
-    return "낮"
-
-
-def pop_topic():
-    """스레드소재.txt 첫 줄을 꺼내고(파일에서 지움) 돌려준다. 없으면 None."""
-    raw = (쇼츠창고.열기().글읽기(TOPICS, "") or "").splitlines()
-    lines = [l.strip() for l in raw if l.strip() and not l.strip().startswith("#")]
-    if not lines:
+def feature_hide(text):
+    """특징 글: "어떤 사주냐면," 다음 마지막 줄(답)을 가린다. 모양이 안 맞으면 None → 다시 쓰게."""
+    lines = [l for l in text.split("\n") if l.strip()]
+    if len(lines) < 4 or not lines[-2].strip().startswith("어떤 사주냐면"):
         return None
-    if not DRY:
-        rest = [l for l in raw if l.strip() != lines[0]]
-        쇼츠창고.열기().글쓰기(TOPICS, chr(10).join(rest).rstrip(chr(10)) + chr(10))
-    return lines[0]
+    try:
+        return 스레드글.entities(text, [lines[-1].strip()])
+    except ValueError:
+        return None
+
+
+def slot_time(slot, day):
+    """시각이 지났으면 그 시간대 남은 구간에서 다시 뽑는다. 다 지났으면 None."""
+    at = datetime.strptime(slot["at"], "%Y-%m-%d %H:%M")
+    if "--day" in sys.argv or at >= now() + timedelta(minutes=5):
+        return slot["at"]
+    h1, m1, h2, m2 = 스레드글.SLOT_WINDOWS[slot["win"]]
+    end = datetime.strptime(day, "%Y-%m-%d") + timedelta(hours=h2, minutes=m2)
+    lo = now() + timedelta(minutes=5)
+    if lo >= end:
+        return None
+    span = int((end - lo).total_seconds() // 60)
+    return (lo + timedelta(minutes=random.randint(0, span))).strftime("%Y-%m-%d %H:%M")
 
 
 def main():
@@ -295,109 +232,78 @@ def main():
         print("오늘(%s) 이미 만들었음 (%s). 끝" % (day, done.get("결과")))
         return 0
     q = 창고.예약표읽기()
-    # 오늘 스레드에 실제로 나갈(나간) 건만 센다. 페북 전용 건(threads_status "없음")·실패 건을 띠 글로 세면 그만큼 덜 만들어 하루가 빈다 (2026-09-22)
-    today = [it for it in q if it.get("publish_at", "").startswith(day)
-             and (it.get("threads_status") in ("대기", "게시") or (it.get("threads_text") and not it.get("threads_status")))]
-    have = {"띠": 0, "일상": 0, "사람": 0, "일진": 0, "증상": 0}
-    for it in today:
-        k = it.get("threads_kind") or "띠"
-        have[k] = have.get(k, 0) + 1
+    # 오늘 이미 들어가 있는 **글만 건**(릴스 아님). 손으로 다시 돌려도 겹치지 않게 그 종류는 안 만든다
+    have = {it.get("threads_kind") for it in q if it.get("publish_at", "").startswith(day)
+            and not it.get("video_url") and it.get("threads_status") in ("대기", "게시")}
     rec = 스레드글.load_record()
-    last_person = max((r["날짜"][:10] for r in rec if r.get("종류") == "사람"), default=None)
-    plan = 스레드글.plan_today(day=day, rng=random.Random(), last_person=last_person)
-    for slot in plan:                                   # 일상 자리 중 첫 번째는 일진 글(오늘 달력 한마디). 나머지 일상은 그대로
-        if slot["kind"] == "일상":
-            slot["kind"] = "일진"
-            break
-    recent_keys = [r.get("훅") for r in rec[-20:] if r.get("종류") == "일진"]
-    print("계획 %d개: %s / 이미 있음 %s" % (len(plan), ", ".join("%s %s" % (x["at"][11:], x["kind"]) for x in plan), have))
+    plan = 스레드글.plan_today(day=day, rng=random.Random())
+    print("계획 %d개: %s / 이미 있음 %s" % (len(plan), ", ".join("%s %s" % (x["at"][11:], x["kind"]) for x in plan),
+                                        sorted(k for k in have if k)))
     if not CLAUDE_OK:
-        print("claude 가 없음 → 일상·사람 글은 건너뜀 (깃허브: Secrets CLAUDE_CODE_OAUTH_TOKEN, PC: 터미널에서 claude 로그인)")
+        print("claude 가 없음 → 띠 글만 만든다 (깃허브: Secrets CLAUDE_CODE_OAUTH_TOKEN, PC: 터미널에서 claude 로그인)")
 
-    weather = weather_today() if any(s["kind"] == "일상" for s in plan) else None
-    used_axes = []                                  # 오늘 이미 쓴 소재축
-    used_symptoms = []                              # 오늘 이미 쓴 증상축
+    def used(k):
+        return [r.get("훅") for r in rec if r.get("종류") == k and r.get("훅")]
+
+    wd = WEEKDAY[datetime.strptime(day, "%Y-%m-%d").weekday()]
     made, skipped, 새건 = [], [], []
     for slot in plan:
-        kind, at = slot["kind"], slot["at"]
-        if have.get(kind, 0) > 0:
-            have[kind] -= 1
-            skipped.append("%s %s(이미 있음)" % (at[11:], kind))
+        kind = slot["kind"]
+        if kind in have:
+            skipped.append("%s %s(이미 있음)" % (slot["at"][11:], kind))
             continue
-        if datetime.strptime(at, "%Y-%m-%d %H:%M") < now() and "--day" not in sys.argv:
-            skipped.append("%s %s(시각 지남)" % (at[11:], kind))
+        at = slot_time(slot, day)
+        if not at:
+            skipped.append("%s %s(시간대 지남)" % (slot["at"][11:], kind))
             continue
+        rng = random.Random()
+        text, ents, animal, hook, theme = None, [], "", None, None
         if kind == "띠":
             try:
-                g = 스레드글.generate(rng=random.Random())
+                g = 스레드글.generate(rng=rng)
             except RuntimeError as e:
                 log_err("%s 스레드 하루치: 띠 글 생성 실패 %s" % (stamp(), e))
                 continue
             text, ents, animal, hook = g["text"], 스레드글.auto_hide(g["text"]), g["animal"], g["hook"]
-            theme = g.get("theme", "흐름")                       # 2026-09-22 주제(흐름·돈·관계·기질·시기)
-        elif kind == "일진":
-            try:
-                g = 일진글.generate(day, random.Random(), avoid_keys=recent_keys)
-            except RuntimeError as e:
-                log_err("%s 스레드 하루치: 일진 글 생성 실패 %s" % (stamp(), e)); continue
-            text, ents, animal, hook = g["text"], [], g["animal"], g["key"]
-        elif kind == "일상":
-            if not CLAUDE_OK:
-                skipped.append("%s 일상(키 없음)" % at[11:]); continue
-            sl = slot_name(at)
-            axis, qform, tones = pick_axis(rec + [{"종류": "일상", "훅": h} for h in used_axes], random.Random(), weather)
-            print("  소재축: %s / 질문틀: %s" % (axis["이름"], qform["이름"]))
-            text = ask(DAILY_PROMPT.format(
-                day=day, weekday=WEEKDAY[datetime.strptime(day, "%Y-%m-%d").weekday()], slot=sl, hour=at[11:13],
-                axis=axis["이름"], axis_use=axis["쓸 것"], axis_avoid=axis["피할 것"],
-                weather=("오늘 날씨: %s (이 숫자와 다른 말 하지 않는다)\n" % weather) if axis.get("날씨필요") else "",
-                tone=tones.get(sl, tones["낮"]), qname=qform["이름"], qhow=qform["쓰는 법"]), must_question=True, daily=True)
-            if not text:
-                log_err("%s 스레드 하루치: 일상 글 못 만듦(%s, 축 %s)" % (stamp(), at, axis["이름"])); continue
-            used_axes.append(axis["이름"])          # 같은 날 두 번째 일상 글이 같은 축을 안 쓰게
-            ents, animal, hook = [], "", axis["이름"]
-        elif kind == "증상":
-            if not CLAUDE_OK:
-                skipped.append("%s 증상(클로드 없음)" % at[11:]); continue
-            ax, basis, form = pick_symptom(rec + used_symptoms, random.Random())
-            m = 스레드글.this_month(datetime.strptime(day, "%Y-%m-%d").date())
-            print("  증상축: %s / 기준: %s / 글꼴: %s" % (ax["이름"], basis["이름"], form["이름"]))
-            text = ask(SYMPTOM_PROMPT.format(axis=ax["이름"], symptom=ax["증상"], split=ax["가르는 말"],
-                                             basis=basis["이름"], basis_how=basis["쓰는 법"],
-                                             form=form["이름"], form_how=form["쓰는 법"],
-                                             month=(m or {}).get("월건", "이번")),
-                       must_question=True, maxlines=13, minlines=5)
-            if not text:
-                log_err("%s 스레드 하루치: 증상 글 못 만듦(%s, 축 %s)" % (stamp(), at, ax["이름"])); continue
-            # 같은 날 두 번째가 같은 축·기준·글꼴을 안 쓰게
-            used_symptoms.append({"종류": "증상", "훅": ax["이름"], "기준": basis["이름"], "글꼴": form["이름"]})
-            ents, animal, hook = [], "", ax["이름"]
-            sym_meta = {"기준": basis["이름"], "글꼴": form["이름"]}
-        else:   # 사람
-            if not CLAUDE_OK:
-                skipped.append("%s 사람(키 없음)" % at[11:]); continue
-            topic = pop_topic()
-            if not topic:
-                skipped.append("%s 사람(소재 없음, 스레드소재.txt 비어 있음)" % at[11:]); continue
-            text = ask(PERSON_PROMPT.format(topic=topic))
-            if not text:
-                log_err("%s 스레드 하루치: 사람 글 못 만듦(%s) 소재는 다시 넣어야 함: %s" % (stamp(), at, topic)); continue
-            ents, animal, hook = [], "", None
+            theme = g.get("theme", "흐름")
+        elif not CLAUDE_OK:
+            skipped.append("%s %s(클로드 없음)" % (at[11:], kind))
+            continue
+        elif kind == "소원":
+            hook = _pick(WISH_WORDS, used("소원"), 3, rng)
+            month = 스레드글.month_line(rng, datetime.strptime(day, "%Y-%m-%d").date()) or "요즘 막혔던 게 풀리는 쪽으로 기운이 도는 달이야"
+            text = ask(WISH_PROMPT.format(month=month, word=hook), maxlines=6, minlines=4)
+        elif kind == "특징":
+            cfg = json.loads(SYMPTOMS.read_text(encoding="utf-8"))
+            ax = _rotate(cfg["축"], used("특징"), 10, rng)
+            hook = ax["이름"]
+            for _ in range(2):                          # 모양("어떤 사주냐면," + 답)이 틀리면 한 번 더
+                t = ask(FEATURE_PROMPT.format(axis=ax["이름"], symptom=ax["증상"], split=ax["가르는 말"]),
+                        maxlines=10, minlines=7)
+                ents = (feature_hide(t) if t else None) or []
+                if ents:
+                    text = t
+                    break
+        elif kind == "경고":
+            hook = _pick(SALS, used("경고"), 6, rng)
+            text = ask(WARN_PROMPT.format(sal=hook), maxlines=9, minlines=5)
+        else:   # 모집
+            when = {"아침": "아침", "낮": "오후", "저녁": "저녁", "밤": "밤"}.get(slot["win"], "")
+            text = ask(RECRUIT_PROMPT.format(day=day, weekday=wd, when=when), maxlines=9, minlines=6)
+        if not text:
+            log_err("%s 스레드 하루치: %s 글 못 만듦(%s)" % (stamp(), kind, at))
+            continue
         vid = "threads-%s-%s" % (kind, at.replace("-", "").replace(" ", "-").replace(":", ""))
         entry = {"id": vid, "video_url": "", "caption": "", "publish_at": at, "status": "없음", "youtube_url": "",
                  "threads_kind": kind, "threads_text": text, "threads_entities": ents, "threads_status": "대기"}
-        print("[%s%s] %s (%d자, 가림 %d곳)" % (kind, ("·" + theme) if kind == "띠" else "", at, len(text), len(ents)))
+        print("[%s] %s (%d자, 가림 %d곳)" % (kind, at, len(text), len(ents)))
         print("  " + (스레드글.show_hidden(text, ents) if ents else text).replace("\n", "\n  "))
-        q = [x for x in q if x.get("id") != vid]
-        q.append(entry)
         made.append(vid)
         새건.append(entry)
         if not DRY:
             rec_row = {"날짜": stamp(), "id": vid, "종류": kind, "띠": animal, "훅": hook, "text": text}
-            if kind == "띠":
+            if theme:
                 rec_row["주제"] = theme
-            if kind == "증상":
-                rec_row.update(sym_meta)       # 기준·글꼴도 남겨야 다음에 안 겹친다
             스레드글.add_record_row(rec_row)
     if DRY:
         print("[dry-run] 아무것도 안 바꿈. 만들 것 %d개, 건너뜀 %s" % (len(made), skipped))

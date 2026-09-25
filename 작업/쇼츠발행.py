@@ -539,7 +539,11 @@ def publish_ig(item, save):
 
 def th_state(it):
     """스레드 상태. 표시가 없으면: 인스타가 아직 대기인 건은 '대기', 스레드 붙기 전에 이미 인스타 게시된 옛 건은 '없음'(안 올림)"""
-    return it.get("threads_status") or ("대기" if it.get("status", "대기") == "대기" else "없음")
+    st = it.get("threads_status") or ("대기" if it.get("status", "대기") == "대기" else "없음")
+    # 2026-09-26 사장님 지시: 스레드는 하루 4개(스레드하루치 글만). 릴스(영상)에 딸린 스레드 글은 안 올린다
+    if st == "대기" and it.get("video_url"):
+        return "없음"
+    return st
 
 
 def threads_text(item):
