@@ -377,8 +377,14 @@ def collect(tok, uid, deep=None):
                 continue
             used = sum(1 for m in conv if m["id"] in mine_ids
                        and ((by_id.get((m.get("replied_to") or {}).get("id")) or {}).get("username") == c.get("username")))
+            # 홍보를 이미 했나 — **안 자른 원문**으로 잰다. 줄기(300자 자름)로 재면 놓친다.
+            # 같은 글 안에서 이 손님에게 단 내 답글을 전부 본다(옆가지 포함).
+            홍보함 = any(
+                any(w in (m.get("text") or "") for w in PROMO_WORDS)
+                for m in conv if m["id"] in mine_ids
+                and (by_id.get((m.get("replied_to") or {}).get("id")) or {}).get("username") == c.get("username"))
             rows.append({"post": p, "reply": c, "used": used, "turn": used + 1,
-                         "chain": build_chain(by_id, c)})
+                         "홍보함": 홍보함, "chain": build_chain(by_id, c)})
     return rows
 
 
@@ -802,9 +808,21 @@ PROMO_LINES = [
 ]
 
 
-def promo_done(chain):
-    """이 대화에서 내가 이미 스하리·프로필을 청했나. 대화 줄기를 직접 본다(별도 기록 불필요)."""
-    return any(line.startswith("나: ") and any(w in line for w in PROMO_WORDS) for line in chain)
+def promo_done(row):
+    """이 손님에게 이미 스하리·프로필을 청했나.
+
+    **줄기 문자열을 보면 안 된다** (2026-09-25 사고). 줄기는 한 줄을 300자로 자르는데
+    홍보 문구는 늘 글 **끝**에 붙는다. 답글이 300자를 넘으면 홍보 줄이 잘려 나가서
+    "아직 안 했네" 하고 또 청했다. 최근 10일에 **16명**한테 두 번 이상 나갔고
+    @pnu_n_me 는 45분 안에 세 번 받았다.
+
+    그래서 collect() 가 **안 자른 원문**으로 미리 재 둔 값을 쓴다.
+    같은 글 안에서 그 손님에게 단 내 답글을 전부 본다 — 줄기에 안 걸리는 옆가지도 잡는다.
+    """
+    if isinstance(row, dict) and "홍보함" in row:
+        return bool(row["홍보함"])
+    줄기 = row.get("chain", []) if isinstance(row, dict) else row       # 옛 호출 대비
+    return any(line.startswith("나: ") and any(w in line for w in PROMO_WORDS) for line in 줄기)
 
 
 def 사람표(y, m, d, hh, gender):
@@ -837,7 +855,7 @@ def 두사람표(row, facts):
 
 
 def write_reply(row, facts, missing, turn, fix=""):
-    done = promo_done(row["chain"])
+    done = promo_done(row)
     두사람 = bool(row.get("facts2"))
     if missing:
         guide = TURN_GUIDE["빠짐"]
@@ -1008,7 +1026,7 @@ def handle(row, dry=False):
     # 검사에 걸리면 **사유를 알려 주고 다시 쓰게 한다.** 한 번에 포기하면 멀쩡한 풀이가 버려진다
     # (2026-09-21 겪음: 줄표 하나, 물음표 하나 때문에 통째로 반려됨).
     need_q = row["turn"] < MAX_PER_PERSON - 1
-    no_promo = promo_done(row["chain"])
+    no_promo = promo_done(row)
     fix, w, err = "", None, ""
     for _ in range(3):
         w = write_reply(row, facts, missing, row["turn"], fix=fix)
