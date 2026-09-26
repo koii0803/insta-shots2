@@ -328,8 +328,27 @@ def 나가기전검사(text):
     return ""
 
 
+def 마침표빼기(t):
+    """팔자오빠는 마침표·가운데점 안 씀 (사장님 2026-09-27) — 답글 나가기 직전에 지운다 (쇼츠발행.py 와 같은 규칙).
+    주소(sajuarcade.com)·아이디(@paljaoppa.dm)·숫자(1.5)·이메일 속 점은 남긴다. 가운데점·말줄임은 띄어쓰기로"""
+    t = t or ""
+    al = lambda c: c.isascii() and c.isalnum()
+    out = []
+    for i, c in enumerate(t):
+        if c in "·ㆍ•‧∙⋅・…":
+            out.append(" ")
+        elif c == ".":
+            run = (i > 0 and t[i - 1] == ".") or (i + 1 < len(t) and t[i + 1] == ".")
+            keep = not run and 0 < i < len(t) - 1 and al(t[i - 1]) and al(t[i + 1])
+            out.append("." if keep else " ")
+        else:
+            out.append(c)
+    return "\n".join(re.sub(r"[ \t]{2,}", " ", x).strip() for x in "".join(out).split("\n")).strip()
+
+
 def publish(tok, uid, reply_id, text):
     """답글 하나 올린다. **앞 답글과 2분이 안 됐으면 기다렸다가** 올린다 (여기가 답글 나가는 유일한 문)."""
+    text = 마침표빼기(text)
     bad = 나가기전검사(text)
     if bad:
         raise RuntimeError("안 올리고 막음 — %s: %s" % (bad, (text or "")[:80]))

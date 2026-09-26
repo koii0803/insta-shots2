@@ -542,6 +542,48 @@ def th_state(it):
     return it.get("threads_status") or ("대기" if it.get("status", "대기") == "대기" else "없음")
 
 
+_가운데점 = set("·ㆍ•‧∙⋅・")
+
+
+def 마침표빼기(t, ents=None):
+    """팔자오빠 스레드 글은 마침표·가운데점 안 씀 (사장님 2026-09-27). 나가기 직전에 지운다.
+    주소(sajuarcade.com)·아이디(@paljaoppa.dm)·숫자(1.5) 속 점은 남긴다. 가운데점·말줄임은 띄어쓰기로.
+    ents(가림 위치, 파이썬 글자 단위)를 주면 지운 만큼 위치를 옮겨서 (글, 새 위치) 로 돌려준다 — 안 옮기면 가림이 엉뚱한 데 씌워짐"""
+    t = t or ""
+    al = lambda c: c.isascii() and c.isalnum()
+    out = []   # (글자, 원래 자리)
+    for i, c in enumerate(t):
+        if c in _가운데점 or c == "…":
+            out.append((" ", i))
+        elif c == ".":
+            run = (i > 0 and t[i - 1] == ".") or (i + 1 < len(t) and t[i + 1] == ".")
+            keep = not run and i > 0 and i + 1 < len(t) and al(t[i - 1]) and al(t[i + 1])
+            out.append(("." if keep else " ", i))
+        else:
+            out.append((c, i))
+    # 띄어쓰기 두 칸 이상은 한 칸, 줄 앞뒤 띄어쓰기는 뺌
+    res = []
+    for c, i in out:
+        if c in " \t" and (not res or res[-1][0] in " \t\n"):
+            continue
+        if c == "\n":
+            while res and res[-1][0] in " \t":
+                res.pop()
+        res.append((c, i))
+    while res and res[-1][0] in " \t":
+        res.pop()
+    글 = "".join(c for c, _ in res)
+    if ents is None:
+        return 글
+    새 = []
+    for e in ents:
+        a, b = e["offset"], e["offset"] + e["length"]
+        자리 = [k for k, (_, i) in enumerate(res) if a <= i < b]
+        if 자리:
+            새.append(dict(e, offset=자리[0], length=자리[-1] - 자리[0] + 1))
+    return 글, 새
+
+
 def threads_text(item):
     """스레드 글: threads_text 가 있으면 그것, 없으면 캡션에서 해시태그 빼고 500자."""
     t = item.get("threads_text")
@@ -558,9 +600,10 @@ def publish_th(item, save):
         print("  스레드 이어서: 컨테이너 %s" % cid)
     else:
         extra = {}
-        if item.get("threads_entities"):                      # 가림(스포일러). PC 에서 AI가 고른 문구 위치. 누르면 보인다
-            extra["text_entities"] = json.dumps(item["threads_entities"])
-        r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=threads_text(item), **extra)
+        글, 가림 = 마침표빼기(threads_text(item), item.get("threads_entities") or [])   # 마침표·가운데점 지우고 가림 위치도 같이 옮김
+        if 가림:                      # 가림(스포일러). PC 에서 AI가 고른 문구 위치. 누르면 보인다
+            extra["text_entities"] = json.dumps(가림)
+        r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=글, **extra)
         cid = r.get("id")
         if not cid:
             raise GraphError("스레드 컨테이너 id 없음: %s" % r)
@@ -597,7 +640,7 @@ def reply_th(item, mid):
     """게시 뒤 첫 답글에 만세력 문장 + 사이트 링크 (본문 링크 금지라 답글로). 실패해도 본문 게시는 유효 → 기록만."""
     try:
         time.sleep(30)                                     # 본문 게시 직후 바로 쏘면 500 (2026-09-18 고정글에서 겪음)
-        r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=THREADS_REPLY, reply_to_id=mid)
+        r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=마침표빼기(THREADS_REPLY), reply_to_id=mid)
         rcid = r.get("id")
         if not rcid:
             raise GraphError("답글 컨테이너 id 없음: %s" % r)
