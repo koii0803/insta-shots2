@@ -815,7 +815,26 @@ def main():
             창고.잠금_풀기()
 
 
+def warn_token_stale(창고, t):
+    """토큰 주간 연장(token-refresh)이 9일 넘게 안 됐으면 하루 한 번 알린다 (2026-09-27).
+    그 워크플로가 취소·누락되면 실패 메일도 안 와서 60일째 조용히 멈출 수 있었다."""
+    try:
+        st = 창고.읽기("토큰상태.json") or {}
+        갱신 = datetime.strptime(st.get("갱신", ""), "%Y-%m-%d %H:%M").replace(tzinfo=t.tzinfo)
+        오늘 = t.strftime("%Y-%m-%d")
+        if t - 갱신 < timedelta(days=9) or st.get("오래됨알림") == 오늘 or DRY:
+            return
+        st["오래됨알림"] = 오늘                      # 토큰갱신.py 가 성공하면 통째로 새로 써서 이 표시도 지워진다
+        창고.쓰기("토큰상태.json", st)
+        tg_send("⚠ 인스타·스레드·페북 토큰 연장이 %d일째 안 됐어 (마지막 %s).\n"
+                "깃허브 insta-shots2 → token-refresh 를 한 번 돌려줘. 60일 되면 올리기가 멈춰"
+                % ((t - 갱신).days, st.get("갱신")))
+    except Exception as e:
+        print("토큰 연장 날짜 확인 못 함: %s" % e)
+
+
 def _main(창고):
+    warn_token_stale(창고, now())
     q = 창고.예약표읽기()
     if not q:
         print("예약표 비어 있음")
