@@ -102,6 +102,7 @@ BANNED = [w for w in 스레드글.BANNED if w not in ("봐줄게", "봐준다", 
 
 
 STORE = None                     # R2 창고. run() 이 연다. 아래 저장 함수들은 전부 이걸 쓴다
+대기중손님 = {}                  # {손님: {글id, ...}} 답이 아직 대기줄에 있는 사람. run() 이 채운다 (prefilter 가 본다)
 
 
 def now():
@@ -464,6 +465,13 @@ def prefilter(row):
                     return "%d일 전에 이미 봐줌(%d일 지나야 다시)" % (지난날, 다시오기막는날)
     except Exception:
         pass
+    # 딴 글에 풀어 준 답이 **아직 대기 중**이어도 이미 봐준 사람이다 (2026-09-27 사장님: 글마다 다는 사람은 무시).
+    #   푼사람 은 답이 나간 뒤에야 적혀서, 3~15분 대기 사이에 딴 글에 또 달면 둘 다 풀어 줬다.
+    #   글 모르는 옛 대기줄(post 없음)도 막는다 — 길어야 15분이다
+    if row.get("used", 0) == 0:
+        딴글 = 대기중손님.get(row["reply"].get("username") or "")
+        if 딴글 and any(p != (row["post"].get("id") or "") for p in 딴글):
+            return "딴 글에서 이미 봐주는 중(답 대기)"
     t = (row["reply"].get("text") or "").strip()
     if not t:
         return "빈 글"
@@ -1393,6 +1401,10 @@ def run(dry=False):
         return 1
 
     busy = {q["reply_id"] for q in queue} | {v["reply_id"] for v in state.get("reports", {}).values()}
+    대기중손님.clear()
+    for q in queue:
+        if q.get("user"):
+            대기중손님.setdefault(q["user"], set()).add(q.get("post") or "")
     todo = [r for r in rows if r["reply"]["id"] not in busy]
     # 댓글이 몰리면 **오래 기다린 것부터**. 안 그러면 늦게 온 사람이 먼저 답을 받고
     # 먼저 쓴 사람은 계속 밀린다 (수집 순서는 글·대화 순서라 사실상 뒤죽박죽이다).
@@ -1441,7 +1453,10 @@ def run(dry=False):
                 continue
             due = now() + dt.timedelta(minutes=random.randint(DELAY_MIN, DELAY_MAX))
             queue.append({"reply_id": rid, "user": user, "text": reply,
-                          "due": due.strftime("%Y-%m-%d %H:%M:%S"), "by": "자동"})
+                          "due": due.strftime("%Y-%m-%d %H:%M:%S"), "by": "자동",
+                          "post": r["post"].get("id") or ""})
+            # 같은 바퀴 안에서 딴 글에 또 단 것도 막는다
+            대기중손님.setdefault(user, set()).add(r["post"].get("id") or "")
             auto += 1
             write_log([now().strftime("%Y-%m-%d %H:%M"), rid, user, text, label, conf, reason, "예약 " + due.strftime("%H:%M"), reply])
         elif label == "미성년":
