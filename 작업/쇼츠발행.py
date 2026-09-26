@@ -453,6 +453,39 @@ def yt_download(url, path):
     return size
 
 
+# ── 나가기 전 마지막 검문 (2026-09-27 사장님: "test reply" 같은 글은 **절대** 안 나간다) ──────────
+#   인스타 캡션·스레드 글·스레드 첫 답글·페북 설명·유튜브 제목/설명이 **전부** 올리기 직전에 여기를 지난다.
+#   전엔 답글 봇(스레드자동답글.publish)에만 있고 여기엔 없었다. 걸리면 안 올리고 텔레그램으로 알린다(다시 안 해 봄)
+_막을말 = re.compile(r"(?<![a-z])(test|reply|error|undefined|null|none|nan|json|todo|lorem|sample|api|assistant|claude|gpt"
+                   r"|openai|traceback|exception)(?![a-z])|[{}]|</?[a-z]+[^>]*>|\[object|as an ai|i'?m sorry"
+                   r"|AI로서|언어 ?모델|시스템 프롬프트", re.I)   # "죄송하지만" 은 안 넣는다 — 사람 글에도 흔하다(9/27 경고 글이 걸렸다)
+
+
+def 나가기전검사(text, 이름, 한글최소=5):
+    """문제 있으면 이유, 없으면 빈 칸. 링크·해시태그·@계정은 빼고 본다 (첫 답글 링크·캡션 해시태그는 정상)"""
+    t = (text or "").strip()
+    if not t:
+        return "%s 빈 글" % 이름
+    본문 = re.sub(r"https?://\S+|#\S+|@\S+", " ", t)
+    han, lat = len(re.findall(r"[가-힣]", 본문)), len(re.findall(r"[A-Za-z]", 본문))
+    if han < 한글최소:
+        return "%s 한글이 거의 없음(%d자)" % (이름, han)
+    if lat > han:
+        return "%s 영어가 더 많음" % 이름
+    m = _막을말.search(본문)
+    if m:
+        return "%s 시험·오류 문구(%s)" % (이름, m.group(0))
+    return ""
+
+
+def 검문(item, text, 이름, 한글최소=5):
+    """걸리면 알리고 GraphError(규격 실패 — 다시 안 해 봄)"""
+    bad = 나가기전검사(text, 이름, 한글최소)
+    if bad:
+        tg_send("🛑 안 올리고 막았어 — %s\n%s\n\n%s" % (bad, item.get("id"), (text or "")[:300]))
+        raise GraphError("올리기 전 검문에 걸림: " + bad, subcode=2207999)
+
+
 def publish_yt(item):
     """R2 → 유튜브 재개 업로드. publish_at 이 15분 이상 앞이면 예약 공개, 아니면 바로 공개. (video_id, 상태) 를 돌려준다"""
     from datetime import timedelta
@@ -463,6 +496,9 @@ def publish_yt(item):
     body = {"snippet": {"title": (item.get("yt_title") or item["id"])[:100], "description": (item.get("yt_description") or "")[:5000],
                         "tags": list(item.get("yt_tags") or [])[:30], "categoryId": "24", "defaultLanguage": "ko"},
             "status": status}
+    검문(item, body["snippet"]["title"], "유튜브 제목", 한글최소=2)
+    if body["snippet"]["description"]:
+        검문(item, body["snippet"]["description"], "유튜브 설명")
     tmp = (Path("/tmp") if Path("/tmp").is_dir() else ROOT) / (item["id"] + ".tmp.mp4")
     try:
         size = yt_download(item["video_url"], str(tmp))
@@ -521,6 +557,7 @@ def publish_ig(item, save):
     if cid:
         print("  인스타 이어서: 컨테이너 %s" % cid)
     else:
+        검문(item, item.get("caption", ""), "인스타 캡션")
         r = graph("POST", IG_USER_ID + "/media", media_type="REELS", video_url=item["video_url"],
                   caption=item.get("caption", ""), share_to_feed="false")   # 릴스 탭에만, 피드에 안 띄움 (2026-09-19 사장님 지시)
         cid = r.get("id")
@@ -603,6 +640,7 @@ def publish_th(item, save):
         글, 가림 = 마침표빼기(threads_text(item), item.get("threads_entities") or [])   # 마침표·가운데점 지우고 가림 위치도 같이 옮김
         if 가림:                      # 가림(스포일러). PC 에서 AI가 고른 문구 위치. 누르면 보인다
             extra["text_entities"] = json.dumps(가림)
+        검문(item, 글, "스레드 글")
         r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=글, **extra)
         cid = r.get("id")
         if not cid:
@@ -640,6 +678,7 @@ def reply_th(item, mid):
     """게시 뒤 첫 답글에 만세력 문장 + 사이트 링크 (본문 링크 금지라 답글로). 실패해도 본문 게시는 유효 → 기록만."""
     try:
         time.sleep(30)                                     # 본문 게시 직후 바로 쏘면 500 (2026-09-18 고정글에서 겪음)
+        검문(item, 마침표빼기(THREADS_REPLY), "스레드 첫 답글")
         r = threads("POST", TH_USER_ID + "/threads", media_type="TEXT", text=마침표빼기(THREADS_REPLY), reply_to_id=mid)
         rcid = r.get("id")
         if not rcid:
@@ -715,6 +754,7 @@ def publish_fb(item, save):
         fb_wait(vid, "uploading_phase")
     if (st.get("publishing_phase") or {}).get("status") == "complete":
         return st.get("publishing_phase", {}).get("post_id") or vid    # 이미 게시된 것(지난 회차에 finish 뒤 저장 못 한 경우)
+    검문(item, item.get("fb_caption", ""), "페북 설명")
     r = fb("POST", PAGE_ID + "/video_reels", upload_phase="finish", video_id=vid, video_state="PUBLISHED",
            description=item.get("fb_caption", ""))
     if not r.get("success"):

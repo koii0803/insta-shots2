@@ -1529,7 +1529,19 @@ def run(dry=False):
             runlog("발행 @%s ← %s" % (q.get("user"), q["text"][:60].replace("\n", " ")))
         except Exception as e:
             log_err("자동답글 발행 실패 %s: %s" % (q["reply_id"], e))
-            tg_send(vault, "❌ 답글 발행 실패\n@%s\n%s" % (q.get("user"), str(e)[:300]))
+            # **다시 해도 영원히 안 되는 것**은 끝낸다 (2026-09-27). 손님이 답글을 막아 둔 글(4279016)·지워진 댓글 등.
+            #   전엔 처리함 표시를 안 해서 다음 바퀴가 그 댓글을 또 집어 AI 로 판단·작성 → 또 실패 → 알림,
+            #   @star7472 한 명에 밤새 12번 넘게 토큰을 태웠다
+            글 = str(e)
+            영영안됨 = ('"is_transient":false' in 글.replace(" ", "")) or any(k in 글 for k in ("4279016", "does not exist", "Unsupported post request"))
+            if 영영안됨:
+                mark_done(q["reply_id"], "", "")
+                write_log([now().strftime("%Y-%m-%d %H:%M"), q["reply_id"], q.get("user", ""), "", "발행 못 함", "", "",
+                           "끝(다시 안 함)", 글[:200]])
+                까닭 = "손님이 자기 글에 답글을 막아 둠" if "4279016" in 글 else "댓글이 없어졌거나 답글을 달 수 없는 글"
+                tg_send(vault, "🚫 @%s 답글은 못 달아서 그만둠 (%s). 다시 안 해 볼게" % (q.get("user"), 까닭))
+            else:
+                tg_send(vault, "❌ 답글 발행 실패 (다음 바퀴에 다시)\n@%s\n%s" % (q.get("user"), 글[:200]))
     queue = left
 
     # 3) 새 답글
