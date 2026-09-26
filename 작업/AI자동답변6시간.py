@@ -141,6 +141,11 @@ def 주울것(tok, uid, 본것):
     봇.load_done = lambda: 본것          # 본체 목록 말고 내 목록으로 본다
     보류 = 봇.STORE.보류_목록()
     손대지마 = 봇.STORE.손대지마_목록()      # 사장님이 직접 챙기는 사람 (2026-09-25)
+    # 본체 대기줄에 답이 걸려 있는 사람도 prefilter 가 알게 (딴 글 대기 중이면 무시)
+    봇.대기중손님.clear()
+    for q in 봇.STORE.읽기("대기.json") or []:
+        if q.get("user"):
+            봇.대기중손님.setdefault(q["user"], set()).add(q.get("post") or "")
     골라진것, 걸린보류 = [], []
     for r in 봇.collect(tok, uid, deep=True):
         rid = r["reply"]["id"]
@@ -148,6 +153,11 @@ def 주울것(tok, uid, 본것):
             걸린보류.append(rid)             # 보류목록에 있었으면 거기서도 빠지게
             continue
         까닭 = 봇.prefilter(r)
+        # 글마다 다는 사람 (2026-09-27 사장님: 무시). 보류목록에 있던 것이라도 딴 글에서 이미 봐줬으면 안 단다.
+        #   전에는 보류에 있던 A 글 댓글을, B 글에서 풀어 준 뒤에 여기서 또 풀어 줄 수 있었다
+        #   걸린보류에 안 넣으니 아래 '사라짐' 으로 보류목록에서도 빠진다 (일주일 뒤 뒤늦게 답하는 일 없게)
+        if 까닭 and ("이미 봐줌" in 까닭 or "딴 글에서" in 까닭):
+            continue
         if rid in 보류:
             골라진것.append(r); 걸린보류.append(rid); continue
         if 까닭 and 까닭.startswith("너무 짧음"):
@@ -225,6 +235,10 @@ def 한바퀴(dry=False, 보기만=False):
         봇.STORE.쓰기(내가본것_이름, sorted(본것))   # **올리자마자** 적는다.
         # 끝에 몰아서 적으면 중간에 죽었을 때 올린 것이 안 적혀 다음 바퀴에 또 올라간다
         봇.mark_done(rid, 내글, 글)
+        try:
+            봇.STORE.푼사람_적기(누구, 봇.now().strftime("%Y-%m-%d"))   # 본체처럼 — 딴 글에 또 오면 7일 무시
+        except Exception:
+            pass
         봇.write_log([봇.now().strftime("%Y-%m-%d %H:%M"), rid, 누구, 말,
                       "AI자동답변", str(conf), 까닭, "발행", 글])
         봇.runlog("     올림 @%s <- %s" % (누구, 글.replace(chr(10), " ")[:60]))
